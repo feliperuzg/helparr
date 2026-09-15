@@ -93,8 +93,12 @@ Early development. The first vertical slice is in:
 | Bulk rename with preview-then-apply | 📋 specified |
 | Packaging (Docker image), saved searches, hardening | 📋 specified |
 
-Every row is specified before it is built — a proposal (requirements), a
-plan (technical design), and delta specs.
+The three implemented rows shipped as one change, verified end to end against a
+real Sonarr instance — 19 requirements across the `auth` and `instances`
+capabilities.
+
+Everything still specified has a proposal (requirements), a plan (technical
+design), and delta specs that merge into the canonical set when it ships.
 
 Because packaging hasn't landed yet, **there is no published image or release
 artifact.** The deployment instructions below build from source.
