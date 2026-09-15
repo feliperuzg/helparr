@@ -1,0 +1,46 @@
+{
+  "name": "helparr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:bundle": "next build && HELPARR_BUNDLE_TEST=1 vitest run test/bundle-leak.test.ts",
+    "test:a11y": "npm run build:standalone && HELPARR_A11Y_TEST=1 vitest run test/a11y.test.ts",
+    "build:standalone": "next build && cp -R .next/static .next/standalone/.next/static"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "argon2": "^0.41.1",
+    "better-sqlite3-multiple-ciphers": "^11.5.0",
+    "next": "^15.0.3",
+    "opossum": "^8.1.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.9.0",
+    "@types/opossum": "^8.1.9",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "axe-core": "^4.13.0",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.0.3",
+    "jsdom": "^25.0.1",
+    "playwright": "^1.63.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  }
+}

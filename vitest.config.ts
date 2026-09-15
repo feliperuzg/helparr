@@ -1,0 +1,35 @@
+import { fileURLToPath } from 'node:url';
+import { configDefaults, defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // `server-only` throws unless it is resolved under React's react-server
+      // condition. Its job is to fail the *Next build* if a server module is
+      // pulled into a client bundle; under Node in vitest there is no such
+      // boundary to police, so it resolves to nothing.
+      'server-only': fileURLToPath(new URL('./test/helpers/noop.ts', import.meta.url)),
+    },
+  },
+  test: {
+    environment: 'node',
+    include: ['test/**/*.test.ts'],
+    // The bundle-leak check reads `next build` output, so it cannot run in the
+    // default lane on a clean checkout. `npm run test:bundle` sets the flag
+    // after building. It is opted in rather than skipped-when-missing so a
+    // forgotten build fails the run instead of quietly passing.
+    exclude: [
+      ...configDefaults.exclude,
+      ...(process.env.HELPARR_BUNDLE_TEST ? [] : ['**/bundle-leak.test.ts']),
+      // Same reasoning for the axe scan, which additionally needs a downloaded
+      // Chromium and boots the standalone server on a real port.
+      ...(process.env.HELPARR_A11Y_TEST ? [] : ['**/a11y.test.ts']),
+    ],
+    // The suite opens real encrypted SQLite files and real loopback HTTP
+    // servers; running files in parallel would have them fight over ports and
+    // over the module-level client caches.
+    fileParallelism: false,
+    testTimeout: 20_000,
+  },
+});
