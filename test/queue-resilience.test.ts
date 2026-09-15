@@ -4,6 +4,7 @@ import { cleanupTestDir } from './helpers/env';
 import { fakeQueue, startFakeArr, type FakeArr } from './helpers/fakeArr';
 import { closeDb } from '@/server/db';
 import { createInstance, deleteInstance } from '@/server/instances/registry';
+import { probeAll, resetHysteresis } from '@/server/health/poller';
 import { readQueue, resetQueueReadState } from '@/server/queue/aggregate';
 import { disposeAllBreakers, isOpen } from '@/server/resilience/breaker';
 
@@ -51,6 +52,7 @@ describe('queue read degradation', () => {
       arr.setDelay(0);
     }
     resetQueueReadState();
+    resetHysteresis();
     disposeAllBreakers();
   });
 
@@ -139,6 +141,36 @@ describe('queue read degradation', () => {
     expect(result.records).toHaveLength(2);
     expect(result.records.every((r) => r.instanceId === sonarrDto.id)).toBe(true);
     expect(isOpen(sonarrDto.id)).toBe(false);
+  });
+
+  it('surfaces the open breaker through the health probe, not just the queue read', async () => {
+    radarr.setMode('server-error');
+    const sonarrDto = register('sonarr', 'Sonarr', sonarr, 'sonarr-key');
+    const radarrDto = register('radarr', 'Radarr', radarr, 'radarr-key');
+
+    await readQueue();
+    await readQueue();
+    expect(isOpen(radarrDto.id)).toBe(true);
+
+    // The probe shares the breaker with the queue read, so an instance that has
+    // been given up on cannot keep answering "ok" on the rail. `unreachable`
+    // plus a `retryAt` is exactly the pair InstanceHealthRail maps to
+    // "not contacted" — the state that tells the operator we stopped trying
+    // rather than that we tried and failed.
+    const health = await probeAll();
+    const radarrHealth = health.instances.find((i) => i.instanceId === radarrDto.id);
+    expect(radarrHealth?.state).toBe('unreachable');
+    expect(radarrHealth?.retryAt).toBeTruthy();
+    expect(radarrHealth?.reason).toBeTruthy();
+
+    // And it costs no request: the rail goes quiet with the read.
+    expect(radarr.hits.filter((h) => h.path.startsWith('/api/v3/system/status'))).toHaveLength(0);
+
+    // The healthy instance is probed normally on the same pass.
+    const sonarrHealth = health.instances.find((i) => i.instanceId === sonarrDto.id);
+    expect(sonarrHealth?.state).toBe('ok');
+    expect(sonarrHealth?.retryAt).toBeNull();
+    expect(health.degradedCount).toBe(1);
   });
 
   it('abandons a slow instance at the deadline and returns with everyone else', async () => {

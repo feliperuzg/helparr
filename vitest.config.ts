@@ -30,7 +30,7 @@ export default defineConfig({
       // measures real frames against a real 500-row queue.
       ...(process.env.HELPARR_E2E_TEST
         ? []
-        : ['**/queue-removal.test.ts', '**/queue-perf.test.ts']),
+        : ['**/queue-removal.test.ts', '**/queue-perf.test.ts', '**/queue-interaction.test.ts']),
     ],
     // The suite opens real encrypted SQLite files and real loopback HTTP
     // servers; running files in parallel would have them fight over ports and
