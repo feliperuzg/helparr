@@ -31,8 +31,23 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
 
-  // Close the mobile drawer on navigation.
-  useEffect(() => { setNavOpen(false); }, [pathname]);
+  /**
+   * Close the mobile drawer on navigation — including a back/forward gesture,
+   * which no click handler on the links would catch.
+   *
+   * Adjusted during render rather than in an effect. The effect form
+   * (`useEffect(() => setNavOpen(false), [pathname])`) commits the new route
+   * with the drawer still covering it and only then re-renders, which is both a
+   * visible flash on a slow device and what `react-hooks/set-state-in-effect`
+   * exists to catch. Setting state during render instead makes React discard
+   * this pass and re-run with the drawer already closed, before anything
+   * reaches the DOM. https://react.dev/reference/react/useState#storing-information-from-previous-renders
+   */
+  const [renderedAt, setRenderedAt] = useState(pathname);
+  if (renderedAt !== pathname) {
+    setRenderedAt(pathname);
+    setNavOpen(false);
+  }
 
   // Digit shortcuts for screen switching — ignored while typing.
   useEffect(() => {

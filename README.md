@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="status: early development" src="https://img.shields.io/badge/status-early%20development-FBBF24">
   <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
-  <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-0F172A">
+  <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-0F172A">
 </p>
 
 ---
@@ -103,7 +103,7 @@ artifact.** The deployment instructions below build from source.
 
 ## Requirements
 
-- **Node.js 20+** and npm
+- **Node.js 20.9+** and npm (the floor is Next 16's)
 - A running *arr instance to point it at (Sonarr, Radarr, and/or Prowlarr) plus
   its API key
 - Native modules are compiled on install (`better-sqlite3-multiple-ciphers`,
@@ -242,7 +242,7 @@ contribution ships under the same terms.
 npm install
 npm test           # unit + integration (vitest)
 npm run typecheck  # tsc --noEmit
-npm run lint       # next lint
+npm run lint       # eslint (flat config)
 ```
 
 Two heavier lanes are gated behind env vars so a forgotten build fails loudly

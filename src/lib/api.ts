@@ -29,6 +29,13 @@ async function request<T>(path: string, init?: RequestInit, bounceOn401 = true):
   if (response.status === 401 && bounceOn401 && typeof window !== 'undefined') {
     // The session expired underneath a long-lived tab. Bounce to login rather
     // than rendering a screen full of errors that look like instance failures.
+    //
+    // A hard navigation is the point, so Next 16's preference for
+    // `useRouter().push()` does not apply here twice over: this is a plain
+    // module with no hooks available, and a soft navigation would preserve the
+    // TanStack Query cache — which still holds instance data fetched under the
+    // session that just died. Reloading the document is what discards it.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign('/login');
     throw new ApiError(401, 'Session expired.');
   }

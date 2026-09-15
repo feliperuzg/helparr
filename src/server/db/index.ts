@@ -25,7 +25,17 @@ const DEFAULT_PATH = './data/helparr.db';
 let handle: Database | null = null;
 
 export function getDatabasePath(): string {
-  return resolve(process.env.HELPARR_DB_PATH ?? DEFAULT_PATH);
+  // `turbopackIgnore` because this is a runtime path, not a bundling concern.
+  // Turbopack (the default builder since Next 16) statically reads any
+  // `path.resolve` of a non-literal as "this module reaches into the
+  // filesystem", and conservatively traces the entire project into the
+  // standalone output — src/, test/, arx/ and all. Measured: 65 MB with the
+  // whole repo inside the deployable server bundle.
+  //
+  // The suggested alternative, scoping to `join(process.cwd(), 'data', …)`,
+  // is not available to us: HELPARR_DB_PATH is an operator-supplied absolute
+  // path to a mounted volume, which is the entire point of the variable.
+  return resolve(/* turbopackIgnore: true */ process.env.HELPARR_DB_PATH ?? DEFAULT_PATH);
 }
 
 export function getDb(): Database {
