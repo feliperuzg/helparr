@@ -3,7 +3,7 @@ import 'server-only';
 import type { HealthResponse, HealthState, InstanceHealthDto } from '@/lib/types';
 import type { ProbeResult } from '@/server/clients/types';
 import { enabledClients, recordHealth } from '@/server/instances/registry';
-import { getBreaker, retryAt } from '@/server/resilience/breaker';
+import { fireOn, isCircuitOpen, retryAt } from '@/server/resilience/breaker';
 import { logger } from '@/server/logging/redact';
 
 /**
@@ -40,20 +40,25 @@ export async function probeAll(): Promise<HealthResponse> {
   // the operator of the other three's state (FR10).
   const settled = await Promise.allSettled(
     targets.map(async (target) => {
-      const breaker = getBreaker(target.id, target.client);
-      const result = await breaker.fire(undefined);
-      return { target, result };
+      // The probe goes through the same breaker as queue reads and removals, so
+      // a persistently failing queue endpoint eventually silences this probe too
+      // — and the rail says "not contacted" instead of claiming connectivity it
+      // is no longer testing.
+      const outcome = await fireOn(target.id, () => target.client.probe(), { isFailure });
+      return { target, outcome };
     }),
   );
 
   const instances: InstanceHealthDto[] = settled.map((entry, index) => {
     const target = targets[index]!;
+    const outcome = entry.status === 'fulfilled' ? entry.value.outcome : null;
+    const circuitOpen = outcome !== null && isCircuitOpen(outcome) ? outcome : null;
 
     // An errored probe resolves to `degraded` with a reason, never to `ok`.
     // Sonarr's own health run can abort when the host is offline, so "no
     // problems reported" is not evidence that there are none.
-    const result: ProbeResult = entry.status === 'fulfilled'
-      ? entry.value.result
+    const result: ProbeResult = outcome !== null && !isCircuitOpen(outcome)
+      ? outcome
       : {
         state: 'degraded',
         reason: 'The probe did not complete; treating the instance as unknown rather than healthy.',
@@ -63,7 +68,7 @@ export async function probeAll(): Promise<HealthResponse> {
       logger.warn('probe threw', { instanceId: target.id, error: entry.reason });
     }
 
-    const failures = isFailure(result)
+    const failures = circuitOpen !== null || isFailure(result)
       ? (consecutiveFailures.get(target.id) ?? 0) + 1
       : 0;
     consecutiveFailures.set(target.id, failures);
@@ -71,7 +76,13 @@ export async function probeAll(): Promise<HealthResponse> {
     let state: HealthState;
     let reason: string | null;
 
-    if (result.state === 'ok') {
+    if (circuitOpen !== null) {
+      // No hysteresis here. The breaker only opened because several failures
+      // already accumulated, so absorbing one more would delay a state that is
+      // by construction not a blip.
+      state = 'unreachable';
+      reason = circuitOpen.reason;
+    } else if (result.state === 'ok') {
       state = 'ok';
       reason = null;
     } else if (result.state === 'unauthorized') {

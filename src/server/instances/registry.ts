@@ -120,6 +120,28 @@ export function enabledClients(): Array<{
     }));
 }
 
+/**
+ * One enabled instance's client, for an operation addressed at a single
+ * instance — removal, principally. Returns null for a disabled instance as well
+ * as a missing one: a disabled instance is one the operator has told us not to
+ * contact, and a write is not an exception to that.
+ */
+export function clientFor(id: string): {
+  id: string;
+  kind: InstanceKind;
+  label: string;
+  client: InstanceClient;
+} | null {
+  const row = getRecord(id);
+  if (!row || row.enabled !== 1) return null;
+  return {
+    id: row.id,
+    kind: row.kind,
+    label: row.label,
+    client: buildClient(row.id, row.kind, row.base_url, row.parsed),
+  };
+}
+
 export interface CreateInstanceInput {
   kind: InstanceKind;
   label: string;

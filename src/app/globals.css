@@ -59,8 +59,11 @@
      --color-ring        contract: rgba(30,41,59,0.5) -> 1.1:1 on #0F172A.
                          A focus ring that cannot be seen is not a focus ring.
                          Raised to slate-400 @ 75%, in-hue: 8.60:1.
-     --color-text-subtle contract: hsl(217 8% 45%) -> 3.4:1. Raised to 58%,
-                         measured 5.69:1 on background, 4.87:1 on cards.
+     --color-text-subtle contract: hsl(217 8% 45%) -> 3.4:1. Raised to 68%
+                         (T24): 58% cleared the page background at 5.69:1 but
+                         fell to 3.98:1 on the cursor-row highlight and 4.27:1
+                         on the amber callout tint, which is where most of this
+                         product's secondary text actually sits.
      --color-surface     contract used color-mix toward white; kept, but the
                          elevated step is widened so table rows, cards and the
                          inspector remain distinguishable on OLED panels.
@@ -75,8 +78,13 @@
 
   --shadow-color: 217deg 30% 50%;
 
-  --color-text-muted:  hsl(217 10% 60%);  /* 6.06:1 on background */
-  --color-text-subtle: hsl(217  8% 58%);  /* 5.69:1 on background */
+  /* Measured against the worst stack these two land on, not against the page
+     background: a grid row that is both selected and under the cursor, where
+     --color-accent-muted composites over --color-primary-muted. Tuning them to
+     the background alone is what put 12px secondary text under AA on every
+     highlighted row (T24). */
+  --color-text-muted:  hsl(217 10% 69%);  /* 4.96:1 on a selected cursor row */
+  --color-text-subtle: hsl(217  8% 68%);  /* 4.85:1 on a selected cursor row */
 
   --color-accent-muted:    rgba(34, 197, 94, 0.15);
   --color-accent-subtle:   rgba(34, 197, 94, 0.08);
@@ -89,7 +97,11 @@
   /* Status roles. Green is reserved for STATUS ONLY (DESIGN.md §7) — never
      for primary actions. Every status also carries an icon or label so the
      colour is never the sole channel. */
-  --color-status-ok:       var(--color-accent-raw);
+  /* One step lighter than --color-accent-raw, for the same reason as the error
+     role below: the raw green is 4.24:1 on --color-status-ok-bg once that tint
+     composites over the cursor-row highlight. The raw value stays put so the
+     diff-add marker and the accent role are unaffected. */
+  --color-status-ok:       #45d97c;
   --color-status-ok-bg:    var(--color-accent-muted);
   --color-status-warn:     var(--color-warn-raw);
   --color-status-warn-bg:  rgba(251, 191, 36, 0.14);
@@ -247,6 +259,8 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .muted  { color: var(--color-text-muted); }
 .subtle { color: var(--color-text-subtle); }
+/* For the one note in a list of notes that describes something unrecoverable. */
+.text-error { color: var(--color-status-error); }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sr-only {
@@ -759,6 +773,194 @@ select.input {
 .table .col-check { width: 32px; padding-left: var(--space-3); }
 .table .col-num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .table .col-grow { max-width: 0; width: 100%; }
+
+/* -------------------------------------------------------------------------
+   QUEUE GRID — a WAI-ARIA grid, not a <table> (REQ-QUEUE-016 / deviation D4).
+
+   Virtualization needs rows it can position absolutely, which a table's own
+   layout algorithm will not allow. CSS grid gives the column alignment back,
+   and it is the only reason the markup is divs: the semantics come from the
+   explicit ARIA roles, not from the elements.
+   ------------------------------------------------------------------------- */
+.qgrid {
+  --qgrid-cols:
+    32px                  /* select   */
+    124px                 /* state    */
+    minmax(0, 1fr)        /* release  */
+    minmax(0, 0.6fr)      /* target   */
+    132px                 /* progress */
+    76px                  /* size     */
+    68px                  /* eta      */
+    56px;                 /* peers    */
+  display: flex; flex-direction: column;
+  min-height: 0;
+  font-size: 12px;
+}
+
+.qgrid__row {
+  display: grid;
+  grid-template-columns: var(--qgrid-cols);
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.qgrid__head {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--color-surface);
+  font-family: var(--font-heading);
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--color-text-subtle);
+  user-select: none;
+}
+.qgrid__head .qgrid__cell { padding: var(--space-2); }
+
+.qgrid__sort {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 0; padding: 0;
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: inherit; cursor: pointer;
+}
+.qgrid__sort:hover { color: var(--color-foreground); }
+.qgrid__sort:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+/* The caret is the second, non-colour channel for sort direction — `aria-sort`
+   carries it for AT, this carries it for everyone else (DESIGN.md §7). */
+.qgrid__sort .sort-caret { font-size: 8px; line-height: 1; color: var(--color-primary); }
+
+/* `contain: strict` includes size containment, so this element is sized as if
+   it were empty — it cannot derive a height from rows the virtualizer positions
+   absolutely. QueueTable therefore states the height explicitly; this only
+   clamps it, so a three-row queue stays three rows tall. */
+.qgrid__scroll { min-height: 0; max-height: min(62vh, 720px); overflow-y: auto; contain: strict; }
+.qgrid__canvas { position: relative; width: 100%; }
+
+.qgrid__body-row {
+  position: absolute; top: 0; left: 0; width: 100%;
+  height: var(--row-height);
+  cursor: pointer;
+  transition: background var(--duration-instant) linear;
+}
+.qgrid__body-row:hover { background: var(--color-primary-subtle); }
+.qgrid__body-row.is-cursor { background: var(--color-primary-muted); }
+.qgrid__body-row.is-cursor .qgrid__cell:first-child {
+  box-shadow: inset 2px 0 0 var(--color-border-strong);
+}
+.qgrid__body-row.is-selected { background: var(--color-accent-subtle); }
+.qgrid__body-row.is-selected.is-cursor { background: var(--color-accent-muted); }
+/* The ring must stay visible over the selection tint, so it is inset rather
+   than an outline the tint can sit on top of. */
+.qgrid__body-row:focus-visible { outline: 2px solid var(--color-ring); outline-offset: -2px; }
+
+/* Pending removal: dimmed but still present. A row that vanishes before the
+   upstream agrees is a lie about state (REQ-QUEUE-014). */
+.qgrid__body-row.is-pending { opacity: 0.6; cursor: progress; }
+
+.qgrid__cell {
+  padding: 0 var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qgrid__cell--check { padding-left: var(--space-3); display: flex; align-items: center; }
+.qgrid__cell--num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.qgrid__skeleton {
+  height: var(--row-height);
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: flex; align-items: center; padding: 0 var(--space-3);
+}
+.qgrid__skeleton span {
+  height: 9px; border-radius: 2px;
+  background: var(--color-primary-muted);
+  animation: qgrid-pulse 1.4s var(--ease-productive) infinite;
+}
+@keyframes qgrid-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
+
+/* Responsive collapse, per wireframes/screen-overview.md. The select and state
+   columns never drop: selection and the non-colour status channel are
+   requirements, not affordances (REQ-QUEUE-017). */
+@media (max-width: 1279px) {
+  .qgrid { --qgrid-cols: 32px 124px minmax(0, 1fr) minmax(0, 0.6fr) 132px 76px; }
+  .qgrid .qcol-eta, .qgrid .qcol-peers { display: none; }
+}
+@media (max-width: 899px) {
+  .qgrid { --qgrid-cols: 32px 124px minmax(0, 1fr); }
+  .qgrid .qcol-target, .qgrid .qcol-progress, .qgrid .qcol-size { display: none; }
+}
+
+/* -------------------------------------------------------------------------
+   Degraded banner — one line per unreadable instance, each naming the
+   instance and offering its own retry (REQ-QUEUE-007, -008).
+   ------------------------------------------------------------------------- */
+.banner { align-items: flex-start; }
+.banner__line {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  font-size: 12px; line-height: 1.5;
+}
+.banner__line + .banner__line { margin-top: var(--space-2); }
+.banner__line > span { flex: 1; min-width: 0; }
+.banner__line .btn { flex: none; align-self: center; }
+
+/* -------------------------------------------------------------------------
+   Upstream message list in the inspector. Every message and every line is
+   rendered — truncating the text that explains a stuck import defeats the
+   purpose of showing it at all (REQ-QUEUE-005).
+   ------------------------------------------------------------------------- */
+.msg-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.msg-list > li {
+  border-left: 2px solid var(--color-border-strong);
+  padding-left: var(--space-3);
+  font-size: 12px; line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.msg-list--nested {
+  margin-top: var(--space-1);
+  gap: var(--space-1);
+}
+.msg-list--nested > li {
+  border-left: 0; padding-left: 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono); font-size: 11px;
+}
+
+/* -------------------------------------------------------------------------
+   Removal preview — every affected item is named, never summarised
+   (REQ-QUEUE-013).
+   ------------------------------------------------------------------------- */
+.removal-list {
+  list-style: none; margin: 0; padding: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.removal-list > li {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+.removal-list > li + li { border-top: 1px solid var(--color-border-subtle); }
+.removal-list .subtle { font-size: 11px; }
+
+.removal-flags {
+  border: 0; margin: var(--space-4) 0; padding: 0;
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.removal-flag {
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  font-size: 12px; line-height: 1.4;
+  cursor: pointer;
+}
+.removal-flag .checkbox { flex: none; margin-top: 1px; }
 
 /* Group header row inside a dense table (Gaps is grouped by series) */
 .table tbody tr.row-group { cursor: default; background: var(--color-surface); height: 30px; }

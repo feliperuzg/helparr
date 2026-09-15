@@ -25,6 +25,12 @@ export default defineConfig({
       // Same reasoning for the axe scan, which additionally needs a downloaded
       // Chromium and boots the standalone server on a real port.
       ...(process.env.HELPARR_A11Y_TEST ? [] : ['**/a11y.test.ts']),
+      // And for the browser lane: the removal walkthrough, which drives the
+      // real DELETE route against a real upstream, and the perf guard, which
+      // measures real frames against a real 500-row queue.
+      ...(process.env.HELPARR_E2E_TEST
+        ? []
+        : ['**/queue-removal.test.ts', '**/queue-perf.test.ts']),
     ],
     // The suite opens real encrypted SQLite files and real loopback HTTP
     // servers; running files in parallel would have them fight over ports and

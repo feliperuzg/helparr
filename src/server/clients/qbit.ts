@@ -1,13 +1,17 @@
 import 'server-only';
 
-import type { InstanceKind } from '@/lib/types';
+import type { InstanceKind, TorrentState } from '@/lib/types';
+import { classifyResponse, readJson, requestWithRetry } from './http';
 import {
   DEFAULT_TIMEOUT_MS,
   describeNetworkError,
   normalizeBaseUrl,
   type ClientConfig,
+  type ClientFailure,
+  type ClientResult,
   type InstanceClient,
   type ProbeResult,
+  type TorrentClient,
 } from './types';
 
 /**
@@ -45,7 +49,7 @@ export function clearAllSessions(): void {
   sessions.clear();
 }
 
-export class QbitClient implements InstanceClient {
+export class QbitClient implements InstanceClient, TorrentClient {
   readonly kind: InstanceKind = 'download-client';
 
   readonly baseUrl: string;
@@ -186,6 +190,112 @@ export class QbitClient implements InstanceClient {
 
     return { state: 'ok', version, latencyMs: Date.now() - started };
   }
+
+  /**
+   * A GET that carries the session and honours Rule 3 — exactly one re-login on
+   * a 401/403, never a loop. Shares the login path with `probe`, so an expired
+   * SID is resolved once for whichever call hits it first.
+   */
+  private async authorized(path: string, signal: AbortSignal): Promise<ClientResult<Response>> {
+    let sid = sessions.get(this.instanceId);
+    if (!sid) {
+      const result = await this.login(signal);
+      if ('state' in result) return { ok: false, error: toClientFailure(result) };
+      sid = result.sid;
+    }
+
+    const send = (cookie: string) => requestWithRetry(
+      `${this.baseUrl}${path}`,
+      {
+        headers: this.headers({ Cookie: `SID=${cookie}`, Accept: 'application/json' }),
+        signal,
+      },
+      signal,
+    );
+
+    let response = await send(sid);
+    if (!response.ok) return response;
+
+    if (response.value.status === 401 || response.value.status === 403) {
+      await response.value.body?.cancel().catch(() => {});
+      sessions.delete(this.instanceId);
+      const relogin = await this.login(signal);
+      if ('state' in relogin) return { ok: false, error: toClientFailure(relogin) };
+      response = await send(relogin.sid);
+      if (!response.ok) return response;
+    }
+
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, 'qBittorrent') };
+    }
+    return { ok: true, value: response.value };
+  }
+
+  /**
+   * Every torrent the client knows about (REQ-QUEUE-003).
+   *
+   * Read wholesale rather than per-hash: one request serves a queue of any size,
+   * and the alternative is N round trips against a service that is frequently
+   * the slowest thing on the network.
+   */
+  async torrents(signal?: AbortSignal): Promise<ClientResult<TorrentState[]>> {
+    const response = await this.authorized('/api/v2/torrents/info', this.signal(signal));
+    if (!response.ok) return response;
+
+    const body = await readJson(response.value, 'qBittorrent');
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: {
+          kind: 'upstream-error',
+          reason: 'qBittorrent returned something other than a torrent list for /torrents/info.',
+        },
+      };
+    }
+
+    // A torrent with no hash cannot be joined to anything, so it is dropped here
+    // rather than carried through the enrichment as a permanent non-match.
+    return {
+      ok: true,
+      value: body.value.map(toTorrentState).filter((torrent) => torrent.hash !== ''),
+    };
+  }
+}
+
+function toClientFailure(
+  result: Extract<ProbeResult, { state: 'unauthorized' | 'unreachable' | 'degraded' }>,
+): ClientFailure {
+  if (result.state === 'unauthorized') return { kind: 'unauthorized', reason: result.reason };
+  if (result.state === 'unreachable') return { kind: 'unreachable', reason: result.reason };
+  return { kind: 'upstream-error', reason: result.reason };
+}
+
+/**
+ * The two states in which qBittorrent has a torrent but not yet its metadata.
+ * This is the condition REQ-QUEUE-005 is about: the *arr reports the download as
+ * healthy because, from its side, nothing has gone wrong yet.
+ */
+const METADATA_STATES = new Set(['metaDL', 'forcedMetaDL']);
+
+function num(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+export function toTorrentState(input: unknown): TorrentState {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const state = typeof raw.state === 'string' ? raw.state : 'unknown';
+  return {
+    hash: typeof raw.hash === 'string' ? raw.hash : '',
+    progress: num(raw.progress),
+    numSeeds: num(raw.num_seeds),
+    numLeechs: num(raw.num_leechs),
+    dlspeed: num(raw.dlspeed),
+    eta: num(raw.eta),
+    state,
+    fetchingMetadata: METADATA_STATES.has(state),
+  };
 }
 
 /**

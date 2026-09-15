@@ -1,4 +1,12 @@
-import type { HealthResponse, InstanceDto, InstanceKind, TestOutcome } from './types';
+import type {
+  HealthResponse,
+  InstanceDto,
+  InstanceKind,
+  QueueResponse,
+  RemovalOutcome,
+  RemovalRequest,
+  TestOutcome,
+} from './types';
 
 /**
  * Browser-side API client.
@@ -73,6 +81,20 @@ export const api = {
 
   health: () => request<HealthResponse>('/api/health'),
 
+  queue: (signal?: AbortSignal) => request<QueueResponse>('/api/queue', { signal }),
+
+  // Every flag is spelled out on the wire. The route rejects an omitted one
+  // rather than defaulting it, so the type being required here is the same rule
+  // enforced twice — once where it is easy to catch, once where it matters.
+  removeQueueItem: (instanceId: string, recordId: number, flags: RemovalRequest) =>
+    request<RemovalOutcome>(
+      `/api/queue/${encodeURIComponent(instanceId)}/${recordId}`
+        + `?removeFromClient=${flags.removeFromClient}`
+        + `&blocklist=${flags.blocklist}`
+        + `&skipRedownload=${flags.skipRedownload}`,
+      { method: 'DELETE' },
+    ),
+
   testConnection: (body: { kind: InstanceKind; baseUrl: string; credential: CredentialInput }) =>
     request<TestOutcome>('/api/instances/test', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -86,6 +108,10 @@ export const api = {
 
   deleteInstance: (id: string) =>
     request<void>(`/api/instances/${id}`, { method: 'DELETE' }),
+
+  /** Collapses an open breaker's reset window so the next read gets through. */
+  retryInstance: (id: string) =>
+    request<void>(`/api/instances/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
 
   // The auth endpoints opt out of the bounce. A 401 here means "that password
   // is wrong", not "your session lapsed" — redirecting to /login would reload

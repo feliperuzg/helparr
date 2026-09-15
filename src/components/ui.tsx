@@ -3,12 +3,13 @@
 /**
  * Shared UI primitives, ported from the design prototype.
  *
- * Only the primitives this change actually renders are ported. The prototype's
- * list-oriented pieces (Inspector, BulkBar, SearchField, Poster) arrive with the
- * changes that need them, so nothing here is dead on delivery.
+ * Only the primitives the shipped screens actually render are ported, so
+ * nothing here is dead on delivery. The list-oriented pieces below — Inspector,
+ * BulkBar, SearchField, KeyboardHints — arrived with `unified-queue-overview`.
+ * `Poster` is still absent: no shipped screen has artwork to show yet.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import Icon, { type IconName } from './Icon';
 
@@ -98,6 +99,123 @@ export function Callout({
     <div className={cls}>
       <Icon name={name} size={14} />
       <div>{children}</div>
+    </div>
+  );
+}
+
+export function SearchField({
+  inputRef,
+  value,
+  onChange,
+  placeholder,
+  label,
+  mono = false,
+}: {
+  inputRef?: RefObject<HTMLInputElement | null>;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  label: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="search">
+      <Icon name="search" size={13} />
+      <label className="sr-only" htmlFor="list-search">{label}</label>
+      <input
+        id="list-search"
+        ref={inputRef}
+        className={`input${mono ? ' mono' : ''}`}
+        type="search"
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span className="search__kbd"><kbd className="kbd">/</kbd></span>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Inspector — detail opens beside the list, never over it (DESIGN.md §5).
+   ------------------------------------------------------------------------- */
+export function Inspector({
+  eyebrow,
+  title,
+  onClose,
+  footer,
+  children,
+}: {
+  eyebrow: ReactNode;
+  title: ReactNode;
+  onClose: () => void;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <aside className="inspector" aria-label="Queue item detail">
+      <div className="inspector__head">
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="inspector__eyebrow">{eyebrow}</div>
+          <div className="inspector__title">{title}</div>
+        </div>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close inspector (Esc)">
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+      <div className="inspector__body">{children}</div>
+      {footer ? <div className="inspector__foot">{footer}</div> : null}
+    </aside>
+  );
+}
+
+export function InspectorGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="inspector__group">
+      <h3 className="inspector__group-title">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Sticky bulk-action bar — appears only when >= 1 row is selected, and states
+   the exact count. "Several" is not an option: the number has to match what
+   the action will affect (REQ-QUEUE-013).
+   ------------------------------------------------------------------------- */
+export function BulkBar({
+  count,
+  noun,
+  onClear,
+  children,
+}: {
+  count: number;
+  noun: string;
+  onClear: () => void;
+  children: ReactNode;
+}) {
+  if (count === 0) return null;
+  return (
+    <div className="bulkbar" role="region" aria-label="Bulk actions">
+      <span className="bulkbar__count">
+        {count} {noun}{count === 1 ? '' : 's'} selected
+      </span>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onClear}>Clear</button>
+      <span className="bulkbar__spacer" />
+      {children}
+    </div>
+  );
+}
+
+export function KeyboardHints({ items }: { items: Array<[string[], string]> }) {
+  return (
+    <div className="hint-row">
+      {items.map(([keys, label]) => (
+        <span className="hint" key={label}>
+          {keys.map((k) => <kbd className="kbd" key={k}>{k}</kbd>)}
+          <span>{label}</span>
+        </span>
+      ))}
     </div>
   );
 }
