@@ -10,7 +10,7 @@
 
 <p align="center">
   <img alt="status: early development" src="https://img.shields.io/badge/status-early%20development-FBBF24">
-  <img alt="license: TBD" src="https://img.shields.io/badge/license-TBD-475569">
+  <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
   <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15-0F172A">
 </p>
 
@@ -232,8 +232,9 @@ It holds the API keys to your entire stack behind a single password.
 
 ## Contributing
 
-Contributions are welcome. helparr is being built in the open and will be
-licensed as open source before its first tagged release.
+Contributions are welcome. helparr is built in the open under the
+[MIT license](LICENSE) — by submitting a pull request you agree your
+contribution ships under the same terms.
 
 ### Getting set up
 
@@ -276,6 +277,10 @@ touches UI, run `npm run test:a11y` too. Describe *what problem it solves* in th
 PR — link the relevant proposal if there is one.
 
 ---
+
+## License
+
+[MIT](LICENSE) © 2026 Felipe Ruz.
 
 ## Legal & scope
 
