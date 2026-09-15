@@ -10,12 +10,22 @@ import { NextResponse, type NextRequest } from 'next/server';
  *
  * Every protected route handler calls `requireSession()` independently. A
  * forged cookie gets past this and fails there.
+ *
+ * Two naming constraints, both learned by running the app rather than from a
+ * type error — neither convention is type-checked:
+ *
+ *  1. The file lives in `src/`, not the repo root. Next matches
+ *     `(?:src/)?proxy` *relative to the directory holding `app/`*, so with an
+ *     `src/app` layout a root-level file is silently never registered: the
+ *     build emits `"middleware": {}` and every request bypasses this check.
+ *  2. The exported function must be named `proxy` (or be the default export).
+ *     Renaming the file without renaming the export fails the same silent way.
  */
 
 const SESSION_COOKIE = 'helparr_session';
 const PUBLIC_PATHS = ['/login'];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
