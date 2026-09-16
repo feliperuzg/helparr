@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import Icon, { type IconName } from './Icon';
 import { StatusDot } from './ui';
@@ -29,10 +29,40 @@ const NAV: NavItem[] = [
   { to: '/settings', label: 'Settings', icon: 'settings', key: '6' },
 ];
 
+/**
+ * The width below which the nav stops being a rail and becomes a drawer. Must
+ * stay in step with the 860px breakpoint in globals.css §Responsive — the
+ * stylesheet decides the layout, this only decides what the menu button means
+ * and what the button reports to a screen reader.
+ */
+const NAV_DRAWER_QUERY = '(max-width: 860px)';
+
+function useMediaQuery(query: string): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const list = window.matchMedia(query);
+      list.addEventListener('change', onChange);
+      return () => list.removeEventListener('change', onChange);
+    },
+    () => window.matchMedia(query).matches,
+    // On the server there is no viewport. helparr is a desktop console, so the
+    // rail is the honest default for the first paint.
+    () => false,
+  );
+}
+
 export default function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const drawer = useMediaQuery(NAV_DRAWER_QUERY);
+
+  // Two states rather than one, because the same button is asking for opposite
+  // things at the two widths: below the breakpoint the nav is hidden until it
+  // is opened, above it the nav is shown until it is collapsed. Collapsing the
+  // rail is a preference, so unlike the drawer it survives navigation.
   const [navOpen, setNavOpen] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  const navVisible = drawer ? navOpen : !navCollapsed;
 
   /**
    * Close the mobile drawer on navigation — including a back/forward gesture,
@@ -87,7 +117,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const current = NAV.find((n) => (n.end ? pathname === n.to : pathname.startsWith(n.to)));
 
   return (
-    <div className="shell">
+    <div className={`shell${navCollapsed ? ' is-nav-collapsed' : ''}`}>
       <a className="skip-link" href="#main">Skip to content</a>
 
       <div className="brand">
@@ -100,9 +130,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <button
           type="button"
           className="icon-btn topbar__menu"
-          onClick={() => setNavOpen((v) => !v)}
+          onClick={() => (drawer ? setNavOpen((v) => !v) : setNavCollapsed((v) => !v))}
           aria-label="Toggle navigation"
-          aria-expanded={navOpen}
+          aria-expanded={navVisible}
         >
           <Icon name="menu" size={16} />
         </button>
@@ -112,7 +142,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <LogoutButton />
       </header>
 
-      {navOpen ? <div className="sidebar-scrim" onClick={() => setNavOpen(false)} /> : null}
+      {/* `drawer &&`, not just `navOpen`: the scrim is positioned only inside
+          the mobile media query, so widening the window with the drawer open
+          would otherwise drop an unstyled div into the shell's grid. */}
+      {drawer && navOpen ? <div className="sidebar-scrim" onClick={() => setNavOpen(false)} /> : null}
 
       <nav className={`sidebar${navOpen ? ' is-open' : ''}`} aria-label="Primary">
         <div className="sidebar__section">

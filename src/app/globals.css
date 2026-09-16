@@ -333,7 +333,8 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
   font-size: 13px; font-weight: 600; letter-spacing: -0.01em;
 }
 .topbar__spacer { flex: 1; }
-.topbar__menu { display: none; }  /* shown under 860px — see §Responsive */
+/* The menu button has one job per breakpoint: above 860px it collapses the
+   rail, below it opens the drawer. Both live in §Responsive. */
 
 .sidebar {
   grid-area: sidebar;
@@ -925,7 +926,11 @@ select.input {
    ------------------------------------------------------------------------- */
 .stoolbar {
   display: flex; flex-direction: column; gap: var(--space-3);
-  margin-bottom: var(--space-4);
+  /* Same inset and rule as `.toolbar` on every other screen. This form is not
+     wrapped in a `.section`, so without them it bleeds past the heading above
+     it and the results below it. */
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 .stoolbar__query { display: flex; gap: var(--space-2); align-items: center; }
 .stoolbar__query .search { flex: 1; min-width: 0; }
@@ -1624,12 +1629,22 @@ select.input {
   :root { --inspector-width: 320px; }
 }
 
+/* Desktop: the menu button collapses the rail outright rather than animating a
+   drawer. `--sidebar-width` is redefined on the shell itself, so the grid
+   template above resolves to a zero column without restating it here. The
+   sidebar is removed rather than clipped: a zero-width grid column does not
+   contain its item, and the nav would otherwise bleed over the content. */
+@media (min-width: 861px) {
+  .shell.is-nav-collapsed { --sidebar-width: 0px; }
+  .shell.is-nav-collapsed .brand,
+  .shell.is-nav-collapsed .sidebar { display: none; }
+}
+
 @media (max-width: 860px) {
   :root { --sidebar-width: 0px; }
 
   .shell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
   .brand { display: none; }
-  .topbar__menu { display: inline-grid; }
   .sidebar {
     position: fixed; z-index: 40;
     top: var(--nav-height); bottom: 0; left: 0; width: 260px;
@@ -1648,7 +1663,7 @@ select.input {
     border-left: none;
   }
 
-  .screen-head, .toolbar, .section { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .screen-head, .toolbar, .stoolbar, .section { padding-left: var(--space-4); padding-right: var(--space-4); }
   .table .col-hide-sm { display: none; }
 }
 
