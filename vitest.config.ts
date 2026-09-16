@@ -26,8 +26,9 @@ export default defineConfig({
       // Chromium and boots the standalone server on a real port.
       ...(process.env.HELPARR_A11Y_TEST ? [] : ['**/a11y.test.ts']),
       // And for the browser lane: the removal walkthrough, which drives the
-      // real DELETE route against a real upstream, the perf guard, which
-      // measures real frames against a real 500-row queue, and the grab
+      // real DELETE route against a real upstream, the perf guards, which
+      // measure real frames against a real 500-row queue and a real 300-release
+      // answer, the keyboard layers, which need a real focus model, and the grab
       // confirmation, whose whole claim is about what the UI has *not* sent yet.
       ...(process.env.HELPARR_E2E_TEST
         ? []
@@ -36,6 +37,8 @@ export default defineConfig({
           '**/queue-perf.test.ts',
           '**/queue-interaction.test.ts',
           '**/search-grab.test.ts',
+          '**/search-interaction.test.ts',
+          '**/search-perf.test.ts',
         ]),
     ],
     // The suite opens real encrypted SQLite files and real loopback HTTP

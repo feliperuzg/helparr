@@ -6,7 +6,8 @@ import { parsedSeries, startFakeArr, type FakeArr } from './helpers/fakeArr';
 import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fakeProwlarr';
 
 /**
- * AC15 / FR13 — `/`, `j`, `k`, `enter` and `esc` on Indexer Search.
+ * AC6, AC15 / FR13 — what the operator can reach from the results, by keyboard
+ * and in the inspector.
  *
  * `useListKeyboard` is shared with the Overview, and `queue-interaction.test.ts`
  * already proves the hook itself. What is asserted here is this screen's wiring
@@ -17,6 +18,10 @@ import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fa
  *  2. **The confirmation owns the keyboard.** While the dialog is up the grid's
  *     handler is disabled, because `j`/`k` moving a cursor behind a dialog is
  *     how the wrong release gets grabbed.
+ *
+ * And the panel those keys open has to identify the release it is showing:
+ * `guid` and originating indexer are what the operator carries to the indexer's
+ * own site when a grab goes wrong, so they are shown rather than summarized.
  *
  * Gated behind HELPARR_E2E_TEST (set by `npm run test:e2e`).
  */
@@ -36,7 +41,7 @@ let sonarr: FakeArr;
 /** The title of the row the cursor is on — the grid's one tab stop. */
 const cursorText = () => page.textContent('.rgrid__body-row.is-cursor .rgrid__cell');
 
-describe('search keyboard layer', { timeout: 90_000 }, () => {
+describe('search interaction', { timeout: 90_000 }, () => {
   beforeAll(async () => {
     prowlarr = await startFakeProwlarr({
       apiKey: 'prowlarr-key',
@@ -95,6 +100,47 @@ describe('search keyboard layer', { timeout: 90_000 }, () => {
     await page.keyboard.press('Escape');
     await expect.poll(() => page.locator('.inspector').count()).toBe(0);
     expect(await cursorText()).toBe(second);
+  });
+
+  it('identifies the opened release by guid and by the indexer it came from', async () => {
+    // The second row, so this cannot pass by reading whatever the panel would
+    // show for the first release in the fixture.
+    await page.keyboard.press('j');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.inspector');
+
+    const title = await page.textContent('.inspector__title');
+    const release = RELEASES.find((r) => r.title === title);
+    expect(release, `the panel is showing "${title}", which is not one of the results`)
+      .toBeDefined();
+
+    // The indexer, twice over: the eyebrow is where it is read at a glance, the
+    // field is where it is read deliberately.
+    expect(await page.textContent('.inspector__eyebrow'))
+      .toBe(`${release!.indexer} · ${release!.protocol}`);
+
+    const identity = await page.evaluate(() => {
+      const group = [...document.querySelectorAll('.inspector__group')]
+        .find((g) => g.querySelector('.inspector__group-title')?.textContent === 'Identity');
+      const out: Record<string, string> = {};
+      const keys = group?.querySelectorAll('.kv__k') ?? [];
+      const values = group?.querySelectorAll('.kv__v') ?? [];
+      keys.forEach((key, i) => {
+        const value = values[i];
+        // The full value lives in the title — a long guid is middle-ellipsized
+        // on screen, and the ellipsis is not what the operator pastes.
+        out[key.textContent ?? ''] = value?.querySelector('.monoval__text')?.getAttribute('title')
+          ?? value?.textContent
+          ?? '';
+      });
+      return out;
+    });
+
+    expect(identity.guid).toBe(release!.guid);
+    expect(identity.Indexer).toBe(release!.indexer);
+    expect(identity.infoHash).toBe(release!.infoHash);
+
+    await page.keyboard.press('Escape');
   });
 
   it('gives the keys to the query field and takes them back', async () => {
