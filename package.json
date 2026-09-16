@@ -17,7 +17,8 @@
     "test:e2e": "npm run build:standalone && HELPARR_E2E_TEST=1 vitest run test/queue-removal.test.ts test/queue-perf.test.ts test/queue-interaction.test.ts test/search-grab.test.ts test/search-interaction.test.ts test/search-perf.test.ts",
     "build:standalone": "next build && cp -R .next/static .next/standalone/.next/static",
     "verify:downloadid": "node scripts/verify-download-id.mjs",
-    "spike:grab": "node scripts/spike-grab-semantics.mjs"
+    "spike:grab": "node scripts/spike-grab-semantics.mjs",
+    "spike:gaps": "node scripts/spike-gaps-attach.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
