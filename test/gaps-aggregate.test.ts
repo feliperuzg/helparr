@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { cleanupTestDir } from './helpers/env';
 import { fakeWanted, startFakeArr, type FakeArr } from './helpers/fakeArr';
+import { isAttachableLink } from '@/lib/attach';
 import { synthesizeTitle } from '@/server/gaps/attach';
 import type { Gap, HistoryEvent } from '@/lib/types';
 import { closeDb } from '@/server/db';
@@ -366,6 +367,38 @@ describe('attach title synthesis', () => {
     // helparr cannot know what is inside the torrent; the token has to be
     // something for the parse to complete, and it is shown in the confirmation.
     expect(synthesizeTitle(gap())).toContain('WEBDL-1080p');
+  });
+});
+
+/* ── The attachable-link predicate (REQ-GAPS-010) ─────────────────────────── */
+
+/**
+ * The dialog disables its button on this and the route refuses on it. They must
+ * not drift, so the shape of "attachable" is pinned here rather than only at the
+ * two call sites — a client rule stricter than the server's silently hides links
+ * that would have worked, and a looser one turns a local, instant explanation
+ * into a round trip and a refusal.
+ */
+describe('attachable links', () => {
+  it('accepts the two shapes an *arr can be handed', () => {
+    expect(isAttachableLink('magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567')).toBe(true);
+    expect(isAttachableLink('https://indexer.invalid/download/abc123.torrent')).toBe(true);
+    // A query string after the path is the common indexer shape, and the
+    // suffix test reads the path rather than the whole URL.
+    expect(isAttachableLink('https://indexer.invalid/dl/abc.torrent?apikey=k')).toBe(true);
+    expect(isAttachableLink('  magnet:?xt=urn:btih:abc  ')).toBe(true);
+    expect(isAttachableLink('https://indexer.invalid/DL/ABC.TORRENT')).toBe(true);
+  });
+
+  it('refuses anything else, without calling it an error', () => {
+    expect(isAttachableLink('https://indexer.invalid/details/abc123')).toBe(false);
+    // Not refused on principle — simply not offered by this flow.
+    expect(isAttachableLink('https://indexer.invalid/download/abc123.nzb')).toBe(false);
+    expect(isAttachableLink('not a url at all')).toBe(false);
+    expect(isAttachableLink('')).toBe(false);
+    // The suffix is the path's, not the query's: a `.torrent` that only appears
+    // in a parameter is not a torrent file.
+    expect(isAttachableLink('https://indexer.invalid/page?file=abc.torrent')).toBe(false);
   });
 });
 

@@ -279,6 +279,49 @@ describe('gaps interaction', { timeout: 120_000 }, () => {
     await scopeTo('All');
   });
 
+  it('states the exact count and the quota it costs, for every one of five', async () => {
+    await scopeTo('Sonarr');
+    await page.keyboard.press('Home');
+    // Every Sonarr gap, one at a time, across the Reacher/Silo boundary — five
+    // is the number AC7 names, and selecting them by hand is what makes the
+    // count below a measurement rather than a restatement of the fixture.
+    for (let i = 0; i < WANTED.length; i += 1) {
+      await page.keyboard.press(' ');
+      await page.keyboard.press('j');
+    }
+
+    await page.waitForSelector('.bulkbar');
+    expect(await page.textContent('.bulkbar__count')).toBe('5 gaps selected');
+
+    await page.click('.bulkbar button:has-text("Search automatically")');
+    await page.waitForSelector('.modal');
+
+    // The count in all three places it appears, and all three read the one
+    // array the confirm handler sends.
+    expect(await page.textContent('.modal__title')).toBe('Search for 5 gaps');
+    expect(await page.textContent('.modal__body')).toContain('these 5 items');
+    expect(await page.textContent('.modal__foot .btn-primary')).toBe('Search 5 gaps');
+
+    // Listed, not merely counted: the operator can check the five against what
+    // they selected, in both groups.
+    const list = await page.textContent('.bulk-list');
+    expect(list).toContain('S01E01, S01E02, S01E03');
+    expect(list).toContain('S02E01, S02E02');
+
+    // What the five cost. A bulk search is cheap for helparr and metered for
+    // the operator, so the price is on the confirmation (NFR3).
+    const warning = await page.textContent('.modal__body');
+    expect(warning).toContain('queries every indexer Prowlarr manages');
+    expect(warning).toContain('daily API limit');
+    expect(warning).toContain('5 searches now');
+
+    // Still nothing sent, with five queued behind the button.
+    expect(sonarr.commands).toHaveLength(0);
+
+    await page.click('.modal__foot button:has-text("Cancel")');
+    await scopeTo('All');
+  });
+
   it('closes a bulk confirmation whose subject moved underneath it', async () => {
     await page.keyboard.press('Home');
     await page.keyboard.press(' ');
@@ -366,6 +409,23 @@ describe('gaps interaction', { timeout: 120_000 }, () => {
     // is made to find out (REQ-GAPS-010).
     expect(await page.getAttribute('#attach-link', 'aria-invalid')).toBe('true');
     expect(await page.isDisabled('.modal__foot .btn-primary')).toBe(true);
+    expect(sonarr.pushes).toHaveLength(0);
+
+    // The other accepted shape, in the same dialog: a URL whose path ends in
+    // `.torrent`. Asserting only the refusal above would pass just as well on a
+    // predicate that refuses everything (REQ-GAPS-010).
+    await page.fill('#attach-link', 'https://indexer.invalid/download/abc123.torrent');
+    await expect.poll(() => page.getAttribute('#attach-link', 'aria-invalid')).toBe('false');
+    await expect.poll(() => page.textContent('.modal__foot .btn-primary')).toBe('Attach to Sonarr');
+    expect(await page.isDisabled('.modal__foot .btn-primary')).toBe(false);
+
+    // And the standing risk is on the confirmation, not a branch of it: the
+    // mapping is by name, so a file that is something else is filed as this.
+    const warning = await page.textContent('.modal__body');
+    expect(warning).toContain('mapped to this episode regardless of what the release name says');
+    expect(warning).toContain('Sonarr will import it under the wrong number');
+
+    // Enabled is not sent.
     expect(sonarr.pushes).toHaveLength(0);
 
     await page.click('.modal__foot button:has-text("Cancel")');
