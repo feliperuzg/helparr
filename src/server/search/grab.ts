@@ -194,6 +194,16 @@ export interface GrabRequest {
   indexer: string | null;
   /** What the confirmation named, or null on the unresolved branch (ADR-3). */
   entityRef: string | null;
+  /**
+   * Which flow produced this write, for the operations log (ADR-7 of
+   * `library-gaps-attach`). The two flows hit the same endpoint and differ only
+   * in where the descriptor came from — a search result, or a link the operator
+   * pasted against a known gap — so they share this function rather than
+   * reimplementing redaction, breaker, logging and the no-retry rule twice.
+   *
+   * Defaults to `'grab'` so every existing caller is unchanged.
+   */
+  operationKind?: 'grab' | 'attach';
 }
 
 /**
@@ -218,6 +228,12 @@ function summaryFor(label: string, entityRef: string | null, verb: string): stri
     ? `${verb} into ${label} — ${entityRef}`
     : `${verb} into ${label} — unresolved target`;
 }
+
+/** Past and present tense, so the summary reads as a sentence either way. */
+const VERBS = {
+  grab: { accepted: 'Grabbed', otherwise: 'Grab' },
+  attach: { accepted: 'Attached', otherwise: 'Attach' },
+} as const;
 
 export async function grab(
   request: GrabRequest,
@@ -255,9 +271,16 @@ export async function grab(
   const rejected = pushed.ok && !pushed.value.accepted;
   const detail = pushed.ok ? pushed.value.rejections : [pushed.error.reason];
 
+  const operationKind = request.operationKind ?? 'grab';
+  const verbs = VERBS[operationKind];
+
   const row = recordOperation({
-    kind: 'grab',
-    summary: summaryFor(dest.value.label, request.entityRef, accepted ? 'Grabbed' : 'Grab'),
+    kind: operationKind,
+    summary: summaryFor(
+      dest.value.label,
+      request.entityRef,
+      accepted ? verbs.accepted : verbs.otherwise,
+    ),
     instanceId: dest.value.id,
     instanceLabel: dest.value.label,
     instanceKind: dest.value.kind,

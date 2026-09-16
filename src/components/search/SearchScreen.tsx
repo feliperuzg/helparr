@@ -43,11 +43,16 @@ const HINTS: Array<[string[], string]> = [
   [['esc'], 'close'],
 ];
 
-export default function SearchScreen() {
+export default function SearchScreen({ initialQuery = '' }: { initialQuery?: string } = {}) {
   const { toasts, push } = useToasts();
   const queryRef = useRef<HTMLInputElement>(null);
 
-  const [draft, setDraft] = useState<SearchCriteria>(DEFAULT_CRITERIA);
+  // Seeded once, deliberately. A link from the gaps inspector arrives with the
+  // item already typed — but rule 1 above still holds, so it is typed and not
+  // run. The operator presses Search, exactly as if they had typed it.
+  const [draft, setDraft] = useState<SearchCriteria>(
+    () => (initialQuery ? { ...DEFAULT_CRITERIA, query: initialQuery } : DEFAULT_CRITERIA),
+  );
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const [openGuid, setOpenGuid] = useState<string | null>(null);
   const [grabbing, setGrabbing] = useState<ReleaseRead | null>(null);

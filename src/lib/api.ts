@@ -1,5 +1,10 @@
 import type {
+  AttachPreview,
+  BulkSearchOutcome,
   EvaluatedRelease,
+  GapHistoryRead,
+  GapKind,
+  GapsResponse,
   GrabOutcome,
   HealthResponse,
   InstanceDto,
@@ -152,6 +157,46 @@ export const api = {
   // abandoned mid-flight — see the route for why.
   grab: (body: GrabInput) =>
     request<GrabOutcome>('/api/grab', { method: 'POST', body: JSON.stringify(body) }),
+
+  /* ── Library gaps and manual attach ────────────────────────────────────── */
+
+  // `refresh` bypasses the cached Sonarr library join (ADR-4). The default read
+  // uses whatever is cached, which is what makes revisiting the screen cheap.
+  gaps: (options: { refresh?: boolean } = {}, signal?: AbortSignal) =>
+    request<GapsResponse>(`/api/gaps${options.refresh ? '?refresh=1' : ''}`, { signal }),
+
+  // One request per item, and only when the inspector is open on it (ADR-6).
+  gapHistory: (
+    params: { instanceId: string; kind: GapKind; upstreamId: number },
+    signal?: AbortSignal,
+  ) =>
+    request<GapHistoryRead>(
+      `/api/gaps/history?instanceId=${encodeURIComponent(params.instanceId)}`
+        + `&kind=${params.kind}&upstreamId=${params.upstreamId}`,
+      { signal },
+    ),
+
+  // Read-only: a synthesized title and the instance's own `GET /parse`. What it
+  // returns is what the attach confirmation shows, including a mismatch.
+  resolveGap: (gapId: string, signal?: AbortSignal) =>
+    request<AttachPreview>('/api/gaps/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ gapId }),
+      signal,
+    }),
+
+  // No `signal`, as with `grab` — the push may already have been accepted.
+  // Only the gap id travels: the title is re-synthesized server-side.
+  attachGap: (body: { gapId: string; link: string }) =>
+    request<GrabOutcome>('/api/gaps/attach', { method: 'POST', body: JSON.stringify(body) }),
+
+  // Never called on render or on a selection change. This spends indexer quota,
+  // so it is reached only from a confirmed dialog (REQ-GAPS-009).
+  bulkSearchGaps: (gapIds: string[]) =>
+    request<{ outcomes: BulkSearchOutcome[] }>('/api/gaps/search', {
+      method: 'POST',
+      body: JSON.stringify({ gapIds }),
+    }).then((r) => r.outcomes),
 
   operations: (filter: OperationFilter, signal?: AbortSignal) =>
     request<OperationsRead>(`/api/operations?filter=${filter}`, { signal }),

@@ -74,6 +74,69 @@ export interface FakeArr {
    * what they contain.
    */
   pushes: Array<{ body: Record<string, unknown> }>;
+
+  /* ── Library-gaps surface (library-gaps-attach) ────────────────────────── */
+
+  /** The `wanted/missing` list this instance serves, paged on demand. */
+  setWanted: (records: FakeGapRecord[]) => void;
+  /**
+   * Overrides the `totalRecords` the wanted list advertises. A real *arr counts
+   * the live list, so it can claim more than it ever hands over — which is how
+   * the paging loop gets to the ceiling in a test without 5,000 objects.
+   */
+  setWantedTotal: (total: number | null) => void;
+  /** Every `wanted/missing` request, with the query it carried (AC3). */
+  wantedRequests: Array<{ params: Record<string, string> }>;
+  /** What `GET /series` returns — the Sonarr join source (ADR-3). */
+  setSeries: (series: unknown[]) => void;
+  /** What `GET /qualityprofile` returns. */
+  setProfiles: (profiles: Array<{ id: number; name: string }>) => void;
+  /** What a history read answers with, for `inferReason`'s input. */
+  setHistory: (events: unknown[]) => void;
+  /** Search commands received, with their payloads (REQ-GAPS-009). */
+  commands: Array<{ body: Record<string, unknown> }>;
+  /** Makes `POST /command` answer with this status instead of 201. */
+  failCommands: (status: number | null) => void;
+}
+
+/** Only the fields `toGapRecord` reads; everything else is noise. */
+export interface FakeGapRecord {
+  id: number;
+  title: string;
+  /* Sonarr */
+  seriesId?: number;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  airDateUtc?: string | null;
+  /* Radarr */
+  year?: number;
+  status?: string;
+  path?: string;
+  qualityProfileId?: number;
+  lastSearchTime?: string | null;
+  digitalRelease?: string | null;
+  physicalRelease?: string | null;
+  inCinemas?: string | null;
+  /* Both */
+  monitored?: boolean;
+  hasFile?: boolean;
+}
+
+/** `count` plausible Sonarr missing episodes, numbered from `from`. */
+export function fakeWanted(count: number, from = 1): FakeGapRecord[] {
+  return Array.from({ length: count }, (_, i) => {
+    const n = from + i;
+    return {
+      id: n,
+      seriesId: 1,
+      seasonNumber: 1,
+      episodeNumber: n,
+      title: `Episode ${n}`,
+      airDateUtc: '2025-01-01T00:00:00Z',
+      monitored: true,
+      hasFile: false,
+    };
+  });
 }
 
 /** A `/parse` body that resolves to a Sonarr series. */
@@ -125,6 +188,14 @@ export async function startFakeArr(options: {
   let parseBody: unknown = null;
   let candidates: unknown[] = [];
   let pushResult: { rejected?: boolean; rejections?: unknown[] } | number = {};
+  let wanted: FakeGapRecord[] = [];
+  let wantedTotalOverride: number | null = null;
+  let series: unknown[] = [];
+  let profiles: Array<{ id: number; name: string }> = [];
+  let history: unknown[] = [];
+  let commandStatus: number | null = null;
+  const wantedRequests: FakeArr['wantedRequests'] = [];
+  const commands: FakeArr['commands'] = [];
 
   const server: Server = createServer((req, res) => {
     const apiKey = (req.headers['x-api-key'] as string | undefined) ?? null;
@@ -179,6 +250,58 @@ export async function startFakeArr(options: {
         pageSize,
         totalRecords: totalOverride ?? queue.length,
         records: queue.slice(start, start + pageSize),
+      });
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/wanted/missing`) {
+      wantedRequests.push({ params: Object.fromEntries(url.searchParams.entries()) });
+      const page = Number(url.searchParams.get('page') ?? '1');
+      const pageSize = Number(url.searchParams.get('pageSize') ?? '200');
+      const start = (page - 1) * pageSize;
+      send(200, {
+        page,
+        pageSize,
+        totalRecords: wantedTotalOverride ?? wanted.length,
+        records: wanted.slice(start, start + pageSize),
+      });
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/series`) {
+      send(200, series);
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/qualityprofile`) {
+      send(200, profiles);
+      return;
+    }
+
+    // Sonarr pages and envelopes; Radarr answers a bare array on its own route.
+    if (url.pathname === `${apiBase}/history`) {
+      send(200, { page: 1, pageSize: history.length, totalRecords: history.length, records: history });
+      return;
+    }
+    if (url.pathname === `${apiBase}/history/movie`) {
+      send(200, history);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === `${apiBase}/command`) {
+      let raw = '';
+      req.on('data', (chunk) => { raw += chunk; });
+      req.on('end', () => {
+        try {
+          commands.push({ body: JSON.parse(raw || '{}') as Record<string, unknown> });
+        } catch {
+          commands.push({ body: { unparseable: raw } });
+        }
+        if (commandStatus !== null) {
+          send(commandStatus, { message: 'Command refused' });
+          return;
+        }
+        send(201, { id: commands.length, name: (commands.at(-1)?.body.name as string) ?? '' });
       });
       return;
     }
@@ -254,6 +377,14 @@ export async function startFakeArr(options: {
     hits,
     removals,
     pushes,
+    wantedRequests,
+    commands,
+    setWanted: (records) => { wanted = records; },
+    setWantedTotal: (total) => { wantedTotalOverride = total; },
+    setSeries: (next) => { series = next; },
+    setProfiles: (next) => { profiles = next; },
+    setHistory: (events) => { history = events; },
+    failCommands: (status) => { commandStatus = status; },
     setParse: (body) => { parseBody = body; },
     setCandidates: (next) => { candidates = next; },
     setPushResult: (result) => { pushResult = result; },

@@ -396,3 +396,120 @@ export interface OperationsRead {
   counts: Record<OperationFilter, number>;
   oldestAt: string | null;
 }
+
+/* ── Library gaps and manual attach (library-gaps-attach) ─────────────────── */
+
+export const GAP_KINDS = ['episode', 'movie'] as const;
+export type GapKind = (typeof GAP_KINDS)[number];
+
+/**
+ * helparr's own reading of why something is missing, never the upstream's.
+ *
+ * Neither Sonarr's nor Radarr's payload answers "why", so the text is composed
+ * from the evidence available and carries its provenance with it (ADR-6). The
+ * tag travels with the data rather than living in a component, so the client
+ * cannot render an inference in the same style as an instance's own words by
+ * styling accident.
+ */
+export interface InferredReason {
+  text: string;
+  source: 'inferred';
+}
+
+export interface Gap {
+  /**
+   * `${instanceId}:${kind}:${upstreamId}`. Two instances hand out the same
+   * `episodeId`, and an `episodeId` and a `movieId` collide across kinds. This
+   * is also what selection survives a refetch on, so it depends only on
+   * identity — never on position, never on a field that changes as the item's
+   * state does (inherited from `queue/aggregate.ts`).
+   */
+  id: string;
+  instanceId: string;
+  instanceLabel: string;
+  instanceKind: InstanceKind;
+  kind: GapKind;
+  /** `episodeId` on Sonarr, `movieId` on Radarr — what a search command takes. */
+  upstreamId: number;
+  /** Sonarr only. The join key into the series cache; null on a movie. */
+  seriesId: number | null;
+  /** The series title, or the literal `Films` for every Radarr gap (FR5). */
+  groupTitle: string;
+  /** `S04E02` on an episode, the release year on a movie. */
+  itemCode: string;
+  title: string;
+  airDate: string | null;
+  wantedQuality: string | null;
+  targetPath: string | null;
+  /**
+   * Radarr only — its `wanted/missing` records carry `lastSearchTime` inline.
+   * Sonarr reports no search state at all, so this is null there and the column
+   * renders an em dash rather than inventing one (ADR-5).
+   */
+  lastSearchAt: string | null;
+  /** Filled by the inspector's on-demand history read, never by the list. */
+  inferred: InferredReason | null;
+}
+
+/**
+ * Deliberately shaped like `QueueResponse` — array, errors, per-instance
+ * freshness, observation time — so the degradation banner, the retry affordance
+ * and the staleness line are the same components with a different array.
+ */
+export interface GapsResponse {
+  gaps: Gap[];
+  /** An unreadable instance is an entry here, never a non-2xx (REQ-GAPS-015). */
+  errors: InstanceReadError[];
+  lastReadAt: Record<string, string>;
+  /** Per-instance age of the cached Sonarr series join (ADR-3). */
+  seriesReadAt: Record<string, string>;
+  observedAt: string;
+}
+
+/** The three fields of `GET /api/v3/series` the gap join actually needs. */
+export interface SeriesSummary {
+  id: number;
+  title: string;
+  path: string;
+  monitored: boolean;
+  /** Sonarr keeps the quality profile on the series, never on the episode. */
+  qualityProfileId: number | null;
+}
+
+/** One row of `GET /api/v3/history` for a single item, as returned. */
+export interface HistoryEvent {
+  at: string;
+  /** Upstream's own vocabulary — `grabbed`, `downloadFolderImported`, … */
+  eventType: string;
+  sourceTitle: string;
+}
+
+export interface GapHistoryRead {
+  events: HistoryEvent[];
+  /** Null when the history is empty — an inference with no evidence is a guess. */
+  inferred: InferredReason | null;
+}
+
+/** What the *arr resolved for a synthesized title, plus whether it is the gap. */
+export interface AttachPreview {
+  /** The name helparr will push. The instance maps the download by parsing it. */
+  title: string;
+  target: ParsedTarget;
+  /**
+   * False when the instance resolved something other than the selected gap.
+   * The dialog names both in that case — it is the branch the pre-flight
+   * exists for (REQ-GAPS-017).
+   */
+  matchesGap: boolean;
+  /** Where the instance would file it, from the gap's own record. */
+  path: string | null;
+}
+
+export interface BulkSearchOutcome {
+  instanceId: string;
+  instanceLabel: string;
+  /** How many gaps this instance's single command carried. */
+  count: number;
+  status: 'queued' | 'failed';
+  reason: string | null;
+}

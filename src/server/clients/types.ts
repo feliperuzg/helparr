@@ -1,6 +1,9 @@
 import 'server-only';
 
 import type {
+  Gap,
+  GapKind,
+  HistoryEvent,
   IndexerRead,
   InstanceKind,
   ParsedTarget,
@@ -8,6 +11,7 @@ import type {
   QueueRecord,
   ReleaseRead,
   RemovalRequest,
+  SeriesSummary,
   TorrentState,
 } from '@/lib/types';
 import type { Credential } from '@/server/instances/credential';
@@ -206,6 +210,100 @@ export function isSearchClient(client: InstanceClient): client is SearchClient {
 export function isReleaseClient(client: InstanceClient): client is ReleaseClient {
   return (client.kind === 'sonarr' || client.kind === 'radarr')
     && typeof (client as ReleaseClient).pushRelease === 'function';
+}
+
+/* ── Library-gap capabilities (library-gaps-attach, T1) ───────────────────── */
+
+/**
+ * One `wanted/missing` record as a single *arr reports it, normalized across the
+ * two APIs that disagree about nearly every field name.
+ *
+ * Derived by omission from `Gap` in the same spirit as `ArrQueueRecord`:
+ * everything the aggregator adds — the composite id, the instance attribution,
+ * the joined series title and path, the inference — is exactly what is missing
+ * here. `groupTitle` and `targetPath` are absent because on Sonarr they come
+ * from the cached `/series` join, not from the record (the spike measured
+ * `series keys (0)` on every missing episode).
+ *
+ * `wantedQuality` is omitted too and replaced by the raw `qualityProfileId`:
+ * neither API returns a profile *name* on a missing record, and on Sonarr the
+ * profile is a property of the series, not of the episode. Resolving the name
+ * needs the join, so it happens where the join lives.
+ */
+export type ArrGapRecord = Omit<
+  Gap,
+  | 'id'
+  | 'instanceId'
+  | 'instanceLabel'
+  | 'instanceKind'
+  | 'groupTitle'
+  | 'targetPath'
+  | 'wantedQuality'
+  | 'inferred'
+> & {
+  /** Radarr carries its own path inline; Sonarr does not (null there). */
+  path: string | null;
+  /** Resolved to a name against `qualityProfiles()`; null when absent. */
+  qualityProfileId: number | null;
+  /**
+   * The three fields below exist only so the released-only guard can run where
+   * the plan puts it — in the aggregator, not in the client. `wanted/missing`
+   * is *supposed* to be monitored-and-fileless already; carrying the evidence
+   * makes that belt-and-braces check possible instead of assumed.
+   */
+  monitored: boolean;
+  hasFile: boolean;
+  /** Radarr's own `status` — `announced` / `inCinemas` / `released`. Null on Sonarr. */
+  releaseStatus: string | null;
+};
+
+export interface ArrGapRead {
+  records: ArrGapRecord[];
+  totalRecords: number;
+  /** Same contract as `ArrQueueRead.truncated` — a short list is never silent. */
+  truncated: boolean;
+}
+
+/** `{ id, name }` off `/qualityprofile` — the only two fields the grid shows. */
+export interface QualityProfileSummary { id: number; name: string; }
+
+/** What a bulk automatic search takes: one command per instance, ids batched. */
+export interface SearchCommandRequest {
+  kind: GapKind;
+  /** `episodeIds` on Sonarr, `movieIds` on Radarr. Never one command per id. */
+  ids: number[];
+}
+
+export interface GapClient extends InstanceClient {
+  /** Everything monitored, missing and — on Radarr — actually released. */
+  wantedMissing(signal?: AbortSignal): Promise<ClientResult<ArrGapRead>>;
+  /**
+   * The Sonarr join source. Radarr implements it as an empty read: its missing
+   * records are self-contained, so there is nothing to join and no cache entry.
+   */
+  series(signal?: AbortSignal): Promise<ClientResult<SeriesSummary[]>>;
+  /** Cached beside `series()`: the id→name map the `Wanted` column needs. */
+  qualityProfiles(signal?: AbortSignal): Promise<ClientResult<QualityProfileSummary[]>>;
+  /** One item's history, read on demand from the inspector — never per row. */
+  historyFor(
+    target: { kind: GapKind; upstreamId: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<HistoryEvent[]>>;
+  /** Queues the instance's own indexer search. A request, never a result. */
+  searchCommand(
+    request: SearchCommandRequest,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<null>>;
+}
+
+/**
+ * Narrowed by kind for the same reason `isArrQueueClient` is: only Sonarr and
+ * Radarr have a notion of "monitored but missing". Prowlarr and the download
+ * client would 404 on every one of these paths.
+ */
+export function isGapClient(client: InstanceClient): client is GapClient {
+  return (client.kind === 'sonarr' || client.kind === 'radarr')
+    && typeof (client as GapClient).wantedMissing === 'function';
 }
 
 export interface ClientConfig {

@@ -1,19 +1,32 @@
 import 'server-only';
 
-import type { InstanceKind, ParsedTarget, RemovalRequest, StatusMessage } from '@/lib/types';
+import type {
+  GapKind,
+  HistoryEvent,
+  InstanceKind,
+  ParsedTarget,
+  RemovalRequest,
+  SeriesSummary,
+  StatusMessage,
+} from '@/lib/types';
 import type { Credential } from '@/server/instances/credential';
 import { BaseArrClient } from './base';
 import { classifyResponse, readJson, requestWithRetry } from './http';
 import {
   describeNetworkError,
+  type ArrGapRead,
+  type ArrGapRecord,
   type ArrQueueClient,
   type ArrQueueRead,
   type ArrQueueRecord,
   type ClientResult,
+  type GapClient,
   type PushOutcome,
+  type QualityProfileSummary,
   type ReleaseCandidate,
   type ReleaseClient,
   type ReleaseDescriptor,
+  type SearchCommandRequest,
 } from './types';
 
 export { arrApiBase } from './base';
@@ -51,7 +64,24 @@ const QUEUE_DEADLINE_MS = 20_000;
  */
 const EVALUATE_DEADLINE_MS = 120_000;
 
-export class ArrClient extends BaseArrClient implements ArrQueueClient, ReleaseClient {
+/**
+ * `wanted/missing` is bounded exactly like the queue, and for a sharper reason:
+ * a library can legitimately have tens of thousands of missing episodes, and
+ * "every gap" is a read the operator triggers by opening a screen.
+ *
+ * 25 × 200 = 5000 records, and hitting the ceiling is reported (REQ-GAPS-002).
+ */
+const GAPS_PAGE_SIZE = 200;
+const GAPS_MAX_PAGES = 25;
+const GAPS_DEADLINE_MS = 30_000;
+
+/**
+ * Enough to show why an item is still missing without paging: the inference
+ * only ever looks at the most recent grab/import/failure for one item.
+ */
+const HISTORY_PAGE_SIZE = 20;
+
+export class ArrClient extends BaseArrClient implements ArrQueueClient, ReleaseClient, GapClient {
   /**
    * One shared deadline for the whole paginated read, combined with the
    * caller's. Per-page timeouts alone would let a queue with twelve pages take
@@ -350,6 +380,255 @@ export class ArrClient extends BaseArrClient implements ArrQueueClient, ReleaseC
 
     return { ok: true, value: { accepted, rejections } };
   }
+
+  /* ── Library gaps ──────────────────────────────────────────────────────── */
+
+  private async wantedPage(
+    page: number,
+    signal: AbortSignal,
+  ): Promise<ClientResult<{ records: ArrGapRecord[]; totalRecords: number }>> {
+    const context = `${this.kind} wanted/missing`;
+
+    const response = await requestWithRetry(
+      this.url('/wanted/missing', {
+        page,
+        pageSize: GAPS_PAGE_SIZE,
+        // Always explicit (AC3). Sonarr's undocumented default sort key has
+        // changed between releases and a 500 on page 1 reads, from here, as
+        // "you have no gaps" — the one answer this screen must never invent.
+        sortKey: this.kind === 'sonarr' ? 'airDateUtc' : 'title',
+        sortDirection: this.kind === 'sonarr' ? 'descending' : 'ascending',
+        monitored: true,
+      }),
+      this.requestInit(signal),
+      signal,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    const envelope = body.value as { records?: unknown; totalRecords?: unknown } | null;
+    if (!envelope || !Array.isArray(envelope.records)) {
+      return {
+        ok: false,
+        error: {
+          kind: 'upstream-error',
+          reason: `${context} returned a body with no records array — this does not look like an *arr wanted list.`,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        records: envelope.records.map((raw) => toGapRecord(raw, this.kind)),
+        totalRecords: typeof envelope.totalRecords === 'number'
+          ? envelope.totalRecords
+          : envelope.records.length,
+      },
+    };
+  }
+
+  async wantedMissing(signal?: AbortSignal): Promise<ClientResult<ArrGapRead>> {
+    const deadline = this.withTimeout(signal, GAPS_DEADLINE_MS);
+    // Keyed for the same reason the queue is: a monitored item can gain a file
+    // while we page, and a record that shifts across a page boundary would
+    // otherwise be listed twice.
+    const seen = new Map<number, ArrGapRecord>();
+    let totalRecords = 0;
+    let page = 1;
+    let truncated = false;
+
+    for (;;) {
+      const result = await this.wantedPage(page, deadline);
+      if (!result.ok) return result;
+
+      totalRecords = result.value.totalRecords;
+      for (const record of result.value.records) seen.set(record.upstreamId, record);
+
+      if (result.value.records.length === 0) break;
+      if (seen.size >= totalRecords) break;
+
+      if (page >= GAPS_MAX_PAGES) {
+        truncated = true;
+        break;
+      }
+      page += 1;
+    }
+
+    return { ok: true, value: { records: [...seen.values()], totalRecords, truncated } };
+  }
+
+  /**
+   * The Sonarr join source (ADR-3). A missing episode carries `seriesId` and
+   * nothing else — no series title, no root path — so the grid's group heading
+   * and the attach dialog's destination path both come from here.
+   *
+   * Radarr answers without a request: its missing records are self-contained.
+   */
+  async series(signal?: AbortSignal): Promise<ClientResult<SeriesSummary[]>> {
+    if (this.kind !== 'sonarr') return { ok: true, value: [] };
+
+    const context = 'sonarr series';
+    const combined = this.withTimeout(signal, GAPS_DEADLINE_MS);
+
+    const response = await requestWithRetry(
+      this.url('/series'),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a series array.` },
+      };
+    }
+
+    // Reduced to four fields on the way in. The full objects are large — a
+    // thousand-series library is megabytes of images, seasons and statistics —
+    // and none of it survives past the join.
+    return { ok: true, value: body.value.map(toSeriesSummary) };
+  }
+
+  async qualityProfiles(signal?: AbortSignal): Promise<ClientResult<QualityProfileSummary[]>> {
+    const context = `${this.kind} quality profiles`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url('/qualityprofile'),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    // An empty list is not an error: the `Wanted` column degrades to an em dash
+    // rather than the whole read failing over a cosmetic column.
+    if (!Array.isArray(body.value)) return { ok: true, value: [] };
+
+    return {
+      ok: true,
+      value: body.value
+        .map((raw) => {
+          const entry = (raw ?? {}) as Record<string, unknown>;
+          return { id: asNumber(entry.id, -1), name: asString(entry.name) };
+        })
+        .filter((profile) => profile.id >= 0 && profile.name.length > 0),
+    };
+  }
+
+  /**
+   * One item's history, read only when the operator opens the inspector.
+   *
+   * Never called per row: this is one request per *item*, and a grid of 400
+   * gaps would otherwise fire 400 requests at an instance that is already the
+   * slowest thing in the fan-out.
+   */
+  async historyFor(
+    target: { kind: GapKind; upstreamId: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<HistoryEvent[]>> {
+    const context = `${this.kind} history`;
+    const combined = this.withTimeout(signal);
+
+    // Sonarr filters the paged collection; Radarr exposes a dedicated
+    // per-movie route that answers with a bare array. Both shapes are read.
+    const url = this.kind === 'sonarr'
+      ? this.url('/history', {
+        episodeId: target.upstreamId,
+        pageSize: HISTORY_PAGE_SIZE,
+        sortKey: 'date',
+        sortDirection: 'descending',
+      })
+      : this.url('/history/movie', { movieId: target.upstreamId });
+
+    const response = await requestWithRetry(url, this.requestInit(combined), combined);
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    const envelope = body.value as { records?: unknown } | null;
+    const raw = Array.isArray(body.value)
+      ? body.value
+      : (Array.isArray(envelope?.records) ? envelope.records : null);
+
+    if (raw === null) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a history array.` },
+      };
+    }
+
+    return { ok: true, value: raw.map(toHistoryEvent).slice(0, HISTORY_PAGE_SIZE) };
+  }
+
+  /**
+   * Queues the instance's *own* indexer search — helparr issues no query and
+   * sees no releases. The answer is "accepted", never "found" (REQ-GAPS-009).
+   *
+   * One command carrying every id, not one command per id: the *arr commands
+   * are serialised anyway, and fifty separate commands would be fifty separate
+   * things for the operator to cancel if they changed their mind.
+   *
+   * No retry, for the same reason `pushRelease` has none — a queued command
+   * that lost its response would be queued twice.
+   */
+  async searchCommand(
+    request: SearchCommandRequest,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<null>> {
+    const context = `${this.kind} search command`;
+    if (request.ids.length === 0) return { ok: true, value: null };
+
+    const combined = this.withTimeout(signal);
+    const payload = request.kind === 'episode'
+      ? { name: 'EpisodeSearch', episodeIds: request.ids }
+      : { name: 'MoviesSearch', movieIds: request.ids };
+
+    let response: Response;
+    try {
+      response = await fetch(this.url('/command'), {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': this.apiKey,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: combined,
+        cache: 'no-store',
+      });
+    } catch (error) {
+      return { ok: false, error: { kind: 'unreachable', reason: describeNetworkError(error) } };
+    }
+
+    if (!response.ok) {
+      return { ok: false, error: classifyResponse(response, context) };
+    }
+    await response.body?.cancel().catch(() => {});
+    return { ok: true, value: null };
+  }
 }
 
 /* ── Queue record parsing ─────────────────────────────────────────────────── */
@@ -501,6 +780,99 @@ export function toReleaseCandidate(input: unknown): ReleaseCandidate {
     rejections: Array.isArray(raw.rejections)
       ? raw.rejections.map(rejectionText).filter((entry) => entry.length > 0)
       : [],
+  };
+}
+
+/* ── Gap record parsing ───────────────────────────────────────────────────── */
+
+/**
+ * The earliest date on which the film could plausibly be downloaded.
+ *
+ * Digital and physical are preferred over `inCinemas` deliberately: a film in
+ * cinemas is released in the sense Radarr means and *not* released in the sense
+ * that matters to an indexer, and listing it as an actionable gap would be
+ * telling the operator to search for something that does not exist yet.
+ */
+function earliestReleaseDate(raw: Record<string, unknown>): string | null {
+  const candidates = [raw.digitalRelease, raw.physicalRelease]
+    .map(asStringOrNull)
+    .filter((value): value is string => value !== null);
+
+  if (candidates.length === 0) return asStringOrNull(raw.inCinemas);
+  return candidates.sort()[0];
+}
+
+export function toGapRecord(input: unknown, kind: InstanceKind): ArrGapRecord {
+  const raw = (input ?? {}) as Record<string, unknown>;
+
+  if (kind === 'radarr') {
+    const year = asNumber(raw.year, 0);
+    return {
+      kind: 'movie',
+      upstreamId: asNumber(raw.id, -1),
+      seriesId: null,
+      itemCode: year > 0 ? String(year) : '—',
+      title: asString(raw.title, 'Untitled'),
+      airDate: earliestReleaseDate(raw),
+      // Radarr alone records this. Sonarr has no per-episode equivalent, and
+      // inventing one from history would be a guess presented as a fact (ADR-5).
+      lastSearchAt: asStringOrNull(raw.lastSearchTime),
+      path: asStringOrNull(raw.path),
+      qualityProfileId: typeof raw.qualityProfileId === 'number' ? raw.qualityProfileId : null,
+      // Absent reads as monitored, not unmonitored: `wanted/missing` only ever
+    // returns monitored items, so a field an older build omits must not make
+    // the belt-and-braces guard downstream throw the whole list away.
+    monitored: raw.monitored !== false,
+      hasFile: raw.hasFile === true,
+      releaseStatus: asStringOrNull(raw.status),
+    };
+  }
+
+  const season = asNumber(raw.seasonNumber, -1);
+  const number = asNumber(raw.episodeNumber, -1);
+  return {
+    kind: 'episode',
+    upstreamId: asNumber(raw.id, -1),
+    seriesId: typeof raw.seriesId === 'number' ? raw.seriesId : null,
+    itemCode: season >= 0 && number >= 0 ? `S${pad(season)}E${pad(number)}` : '—',
+    title: asString(raw.title, 'Untitled'),
+    airDate: asStringOrNull(raw.airDateUtc) ?? asStringOrNull(raw.airDate),
+    lastSearchAt: null,
+    // Both come from the series, via the join — the episode record carries
+    // neither, which is exactly why the join exists.
+    path: null,
+    qualityProfileId: null,
+    // Absent reads as monitored, not unmonitored: `wanted/missing` only ever
+    // returns monitored items, so a field an older build omits must not make
+    // the belt-and-braces guard downstream throw the whole list away.
+    monitored: raw.monitored !== false,
+    hasFile: raw.hasFile === true,
+    releaseStatus: null,
+  };
+}
+
+export function toSeriesSummary(input: unknown): SeriesSummary {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  return {
+    id: asNumber(raw.id, -1),
+    title: asString(raw.title, 'Untitled series'),
+    path: asString(raw.path),
+    // Absent reads as monitored, not unmonitored: `wanted/missing` only ever
+    // returns monitored items, so a field an older build omits must not make
+    // the belt-and-braces guard downstream throw the whole list away.
+    monitored: raw.monitored !== false,
+    qualityProfileId: typeof raw.qualityProfileId === 'number' ? raw.qualityProfileId : null,
+  };
+}
+
+export function toHistoryEvent(input: unknown): HistoryEvent {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  return {
+    at: asString(raw.date),
+    eventType: asString(raw.eventType, 'unknown'),
+    // The release name the event is about. Shown verbatim — a truncated or
+    // prettified release name is useless for working out what went wrong.
+    sourceTitle: asString(raw.sourceTitle),
   };
 }
 

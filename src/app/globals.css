@@ -1083,6 +1083,142 @@ select.input {
 }
 
 /* -------------------------------------------------------------------------
+   GAPS GRID — the queue's grid plus a heading row the cursor cannot land on.
+
+   The grouping is presentational only: the component feeds the virtualizer a
+   flat list with headings spliced in, and the heading is styled to read as a
+   divider rather than as a row, because it is not one — it has no checkbox, no
+   tab stop, and nothing to open (REQ-GAPS-005).
+   ------------------------------------------------------------------------- */
+.ggrid {
+  --ggrid-cols:
+    32px                  /* select      */
+    84px                  /* item code   */
+    minmax(0, 1fr)        /* title       */
+    92px                  /* aired       */
+    minmax(0, 0.34fr)     /* wanted      */
+    92px;                 /* last search */
+  display: flex; flex-direction: column;
+  min-height: 0;
+  font-size: 12px;
+}
+
+.ggrid__row {
+  display: grid;
+  grid-template-columns: var(--ggrid-cols);
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.ggrid__head {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--color-surface);
+  font-family: var(--font-heading);
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--color-text-subtle);
+  user-select: none;
+}
+.ggrid__head .ggrid__cell { padding: var(--space-2); }
+
+/* Same containment caveat as .qgrid__scroll: `contain: strict` sizes this as
+   if it were empty, so GapsGrid states the height and this only clamps it. */
+.ggrid__scroll { min-height: 0; max-height: min(64vh, 760px); overflow-y: auto; contain: strict; }
+.ggrid__canvas { position: relative; width: 100%; }
+
+.ggrid__body-row {
+  position: absolute; top: 0; left: 0; width: 100%;
+  height: var(--row-height);
+  cursor: pointer;
+  transition: background var(--duration-instant) linear;
+}
+.ggrid__body-row:hover { background: var(--color-primary-subtle); }
+.ggrid__body-row.is-cursor { background: var(--color-primary-muted); }
+.ggrid__body-row.is-cursor .ggrid__cell:first-child {
+  box-shadow: inset 2px 0 0 var(--color-border-strong);
+}
+.ggrid__body-row.is-selected { background: var(--color-accent-subtle); }
+.ggrid__body-row.is-selected.is-cursor { background: var(--color-accent-muted); }
+/* The row the inspector is showing, edged as well as tinted so the pairing
+   survives without colour — and edged in the accent so it stays distinct from
+   the cursor's own edge when they are the same row. */
+.ggrid__body-row.is-open .ggrid__cell:first-child {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.ggrid__body-row:focus-visible { outline: 2px solid var(--color-ring); outline-offset: -2px; }
+
+/* The heading spans every column rather than aligning to them: it labels the
+   group, it does not describe a row's worth of fields. Hence flex over the
+   grid `.ggrid__row` sets — there is one cell, and it takes the whole width.
+   It is positioned like a row because the virtualizer places it like one. */
+.ggrid__group {
+  position: absolute; top: 0; left: 0; width: 100%;
+  height: var(--group-height);
+  display: flex; align-items: center;
+  background: var(--color-bg-tinted);
+  border-bottom: 1px solid var(--color-border);
+  cursor: default;
+}
+.ggrid__group-cell {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  min-width: 0;
+  padding: 0 var(--space-3);
+  width: 100%;
+}
+.ggrid__group-title {
+  font-family: var(--font-heading);
+  font-size: 12px; font-weight: 600;
+  color: var(--color-foreground);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ggrid__group-meta {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+/* Pushed right and dimmed: which instance a group came from matters when two
+   disagree, and is noise the rest of the time. */
+.ggrid__group-instance {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  color: var(--color-text-subtle);
+}
+
+.ggrid__cell {
+  padding: 0 var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ggrid__cell--check { padding-left: var(--space-3); display: flex; align-items: center; }
+
+.ggrid__skeleton {
+  height: var(--row-height);
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: flex; align-items: center; padding: 0 var(--space-3);
+}
+.ggrid__skeleton span {
+  height: 9px; border-radius: 2px;
+  background: var(--color-primary-muted);
+  animation: qgrid-pulse 1.4s var(--ease-productive) infinite;
+}
+
+/* Responsive collapse, per wireframes/screen-gaps.md. Select, item code and
+   title never drop: the first is how a bulk search is built, and the other two
+   are the only way to tell two missing episodes apart. */
+@media (max-width: 1199px) {
+  .ggrid { --ggrid-cols: 32px 84px minmax(0, 1fr) 92px minmax(0, 0.34fr); }
+  .ggrid .gcol-search { display: none; }
+}
+@media (max-width: 767px) {
+  .ggrid { --ggrid-cols: 32px 84px minmax(0, 1fr); }
+  .ggrid .gcol-aired, .ggrid .gcol-wanted { display: none; }
+}
+
+/* -------------------------------------------------------------------------
    Degraded banner — one line per unreadable instance, each naming the
    instance and offering its own retry (REQ-QUEUE-007, -008).
    ------------------------------------------------------------------------- */
@@ -1369,6 +1505,30 @@ select.input {
    choose has no visible indication at all. */
 .dest-chip:has(input:focus-visible) { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 .dest-chip:has(input:disabled) { cursor: not-allowed; opacity: 0.55; }
+
+/* A magnet URI is one unbroken ~200-character token. Without an explicit break
+   it widens the dialog past the viewport instead of wrapping inside it. */
+.attach-link { font-size: 12px; word-break: break-all; }
+
+/* The items a bulk search will cover, listed rather than counted. Scrolls past
+   a dozen or so rather than pushing the confirming button off the screen —
+   which would leave the operator confirming a list they cannot see the end of. */
+.bulk-list {
+  list-style: none;
+  margin: var(--space-3) 0;
+  padding: 0;
+  max-height: 34vh;
+  overflow-y: auto;
+  font-size: 12px;
+}
+.bulk-list li {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: var(--space-1) 0;
+  min-width: 0;
+}
+.bulk-list__group { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bulk-list__codes { color: var(--color-text-muted); font-size: 11px; min-width: 0; }
+.bulk-list__instance { margin-left: auto; flex: none; font-size: 10px; color: var(--color-text-subtle); }
 
 .grab-resolve { margin: var(--space-4) 0; display: grid; gap: var(--space-2); }
 .grab-target { padding: var(--space-3); background: var(--color-surface-sunken); }

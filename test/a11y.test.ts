@@ -3,7 +3,9 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { login, seedInstance, startApp, type AppServer } from './helpers/appServer';
-import { fakeQueue, parsedSeries, startFakeArr, type FakeArr } from './helpers/fakeArr';
+import {
+  fakeQueue, parsedSeries, startFakeArr, type FakeArr, type FakeGapRecord,
+} from './helpers/fakeArr';
 import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fakeProwlarr';
 
 /**
@@ -18,6 +20,13 @@ import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fa
  * check: `aria-pressed` on the scope chips, a busy results region while a
  * search is in flight, a dialog that actually holds the keyboard, 44px targets
  * on a coarse pointer, and outcomes stated in words rather than in colour.
+ *
+ * T22 / AC13 extends it once more to Library Gaps — the grouped, virtualized
+ * grid with a degraded instance, the inspector, both branches of the attach
+ * confirmation, the bulk-search confirmation and the filtered-to-nothing empty
+ * state — plus the two properties specific to a grid whose rows are interleaved
+ * with headings: it is still one tab stop, and its row indices count the
+ * headings they render, at any scroll position.
  *
  * This drives the real standalone build in a real browser rather than rendering
  * components under jsdom. NFR7's requirements are mostly *rendered* properties
@@ -39,6 +48,35 @@ const WCAG_AA = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 
 /** Enough rows that the grid is genuinely virtualized (NFR7, ADR-6). */
 const QUEUE_SIZE = 500;
+
+/**
+ * The gaps fixture: three series, a hundred missing episodes each. Enough rows
+ * that the grid virtualizes, and — unlike the queue or a result set — with group
+ * headings interleaved between them, which is the structure the row-index and
+ * tab-stop assertions below are about.
+ */
+const GAP_SERIES = [
+  { id: 1, title: 'Reacher', path: '/tv/Reacher', qualityProfileId: 3 },
+  { id: 2, title: 'Silo', path: '/tv/Silo', qualityProfileId: 3 },
+  { id: 3, title: 'Severance', path: '/tv/Severance', qualityProfileId: 3 },
+];
+const PER_SERIES = 100;
+const GAP_COUNT = GAP_SERIES.length * PER_SERIES;
+const WANTED: FakeGapRecord[] = GAP_SERIES.flatMap((series, s) => (
+  Array.from({ length: PER_SERIES }, (_, e) => ({
+    id: s * PER_SERIES + e + 1,
+    seriesId: series.id,
+    seasonNumber: 1,
+    episodeNumber: e + 1,
+    title: `Episode ${e + 1}`,
+    airDateUtc: '2025-01-01T00:00:00Z',
+    monitored: true,
+    hasFile: false,
+  }))
+));
+
+/** A well-formed link, so the confirmation reaches its resolved state. */
+const MAGNET = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567';
 
 let app: AppServer;
 let browser: Browser;
@@ -102,6 +140,33 @@ async function runSearch(query = 'show') {
     .toBeGreaterThan(0);
 }
 
+/** Library Gaps, loaded, with the whole read on screen. */
+async function openGaps() {
+  await page.goto(`${ORIGIN}/gaps`);
+  await expect
+    .poll(() => page.getAttribute('.ggrid', 'aria-rowcount'), { timeout: 30_000 })
+    .toBe(String(GAP_COUNT + GAP_SERIES.length + 1));
+}
+
+/**
+ * Row → inspector → attach confirmation, on the gap whose code is `code`.
+ *
+ * The pre-flight is awaited rather than the dialog: `.grab-target` only appears
+ * once the instance has answered, and scanning before it lands would scan a
+ * loading state instead of the confirmation this is about.
+ */
+async function openAttachDialog(code: string) {
+  await page.click(`.ggrid__body-row:has-text("${code}")`);
+  await page.waitForSelector('.inspector');
+  await page.click('.inspector button:has-text("Attach")');
+  await page.waitForSelector('.modal[role="dialog"]');
+  // The name being offered is the one thing both branches render once the
+  // instance has answered — `.grab-target` is the agreement branch only, so
+  // waiting on it would hang exactly where the disagreement is being scanned.
+  await page.waitForSelector('text=sending as');
+  await page.fill('#attach-link', MAGNET);
+}
+
 /**
  * Row → inspector → confirmation, settled on Sonarr.
  *
@@ -133,6 +198,10 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     radarr = await startFakeArr({ apiKey: 'radarr-key', version: '5.14.0.9383' });
     // What Sonarr makes of a release title, for the grab confirmation.
     sonarr.setParse(parsedSeries());
+    // The library this Sonarr is missing episodes from, for the gaps scans.
+    sonarr.setWanted(WANTED);
+    sonarr.setSeries(GAP_SERIES);
+    sonarr.setProfiles([{ id: 3, name: 'HD-1080p' }]);
 
     prowlarr = await startFakeProwlarr({ apiKey: 'prowlarr-key', indexers: INDEXERS });
     // One freeleech result, so the FL badge — the flag that must not be carried
@@ -557,5 +626,131 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
       expect(['Succeeded', 'Rejected', 'Failed']).toContain(row.word);
       expect(row.dotLabel).toBe(row.word);
     }
+  });
+
+  /* ---------------------------------------------------------------------
+     T22 — Library Gaps.
+     --------------------------------------------------------------------- */
+
+  it('Library Gaps has zero violations with a grouped, virtualized grid and a degraded instance', async () => {
+    await openGaps();
+    // Radarr has been answering 401 since the Settings scans, so the banner is
+    // part of the surface rather than incidental to it.
+    await page.waitForSelector('.banner');
+    await scan('Gaps (populated, degraded)');
+  });
+
+  it('Library Gaps has zero violations with the inspector open', async () => {
+    await openGaps();
+    await page.click('.ggrid__body-row >> nth=0');
+    await page.waitForSelector('.inspector');
+    await scan('Gaps (inspector open)');
+    await page.keyboard.press('Escape');
+  });
+
+  it('Library Gaps has zero violations with the attach confirmation open, resolved and mismatched', async () => {
+    // The instance agrees with the gap: the confirmation names one destination
+    // and offers to send.
+    sonarr.setParse(parsedSeries({ id: 1, title: 'Reacher', season: 1, episode: 1 }));
+    await openGaps();
+    await openAttachDialog('S01E01');
+    // The agreement branch names one destination, and only this branch does.
+    await page.waitForSelector('.grab-target');
+    await scan('Gaps (attach confirmation, resolved)');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.modal[role="dialog"]').count()).toBe(0);
+
+    // And the branch that matters more: the instance reads the same name as a
+    // different episode. The disagreement is stated in words, in a warning
+    // callout — a surface that only renders when something is off is exactly
+    // the one that escapes review.
+    await openAttachDialog('S01E03');
+    await page.waitForSelector('text=Sonarr reads this as a different episode');
+    await scan('Gaps (attach confirmation, mismatch)');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.modal[role="dialog"]').count()).toBe(0);
+  });
+
+  it('Library Gaps has zero violations with the bulk-search confirmation open', async () => {
+    await openGaps();
+    // Selected from the keyboard, which is also the only way to select without
+    // opening the inspector — Space on the cursor row, then the next one.
+    await page.keyboard.press('Home');
+    await page.keyboard.press(' ');
+    await page.keyboard.press('j');
+    await page.keyboard.press(' ');
+    await page.waitForSelector('.bulkbar');
+    await scan('Gaps (bulk bar)');
+
+    await page.click('.bulkbar button:has-text("Search automatically")');
+    await page.waitForSelector('.modal[role="dialog"]');
+    await scan('Gaps (bulk search confirmation)');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.modal[role="dialog"]').count()).toBe(0);
+  });
+
+  it('Library Gaps has zero violations with a filter that matches nothing', async () => {
+    await openGaps();
+    await page.fill('#list-search', 'no-such-episode-anywhere');
+    await page.waitForSelector('.empty');
+    await scan('Gaps (empty filter result)');
+    await page.fill('#list-search', '');
+  });
+
+  it('keeps the gaps grid to one tab stop, and never makes a heading one', async () => {
+    await openGaps();
+
+    // The roving tabindex, stated as an invariant — and the half of it that is
+    // specific to this grid: a heading is a rendered row, so the obvious
+    // implementation gives it a tabindex too and doubles the tab stops.
+    expect(await page.locator('.ggrid__body-row[tabindex="0"]').count()).toBe(1);
+    expect(await page.locator('.ggrid__group[tabindex]').count()).toBe(0);
+
+    // The walk itself, driven with real key events — focus order is the
+    // browser's to decide, and the thing operators actually experience. From
+    // the filter field, Tab reaches the grid's one row within a few stops.
+    await page.focus('#list-search');
+    let reached = false;
+    for (let i = 0; i < 12 && !reached; i += 1) {
+      await page.keyboard.press('Tab');
+      reached = await page.evaluate(
+        () => Boolean((document.activeElement as HTMLElement | null)?.classList.contains('ggrid__body-row')),
+      );
+    }
+    expect(reached, 'Tab never reached a grid row').toBe(true);
+
+    // One more Tab leaves the grid rather than walking 300 rows and 3 headings.
+    await page.keyboard.press('Tab');
+    const stillInside = await page.evaluate(
+      () => Boolean((document.activeElement as HTMLElement | null)?.closest('.ggrid')),
+    );
+    expect(stillInside, 'Tab did not escape the grid after one row').toBe(false);
+  });
+
+  it('reports row indices that count the headings, at any scroll position', async () => {
+    await openGaps();
+
+    // What is on screen at position N is what "row N" has to mean, so the count
+    // is gaps *plus* headings plus the column header — not the gap count.
+    expect(await page.getAttribute('.ggrid', 'aria-rowcount'))
+      .toBe(String(GAP_COUNT + GAP_SERIES.length + 1));
+
+    const indicesNow = () => page.locator('.ggrid__row[aria-rowindex]')
+      .evaluateAll((rows) => rows.map((r) => Number(r.getAttribute('aria-rowindex'))));
+
+    const atTop = await indicesNow();
+    // If this ever approaches the full list the grid stopped virtualizing, and
+    // the rest of this test would pass for the wrong reason.
+    expect(atTop.length).toBeLessThan(GAP_COUNT / 2);
+    expect(atTop).toContain(2);
+
+    await page.locator('.ggrid__scroll').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+
+    // The last row announces itself as row 304 of 304 — not as row 40 of 40,
+    // which is what the rendered window alone would say.
+    const last = GAP_COUNT + GAP_SERIES.length + 1;
+    await expect.poll(async () => (await indicesNow()).includes(last), { timeout: 10_000 })
+      .toBe(true);
+    expect((await indicesNow()).length).toBeLessThan(GAP_COUNT / 2);
   });
 });

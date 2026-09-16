@@ -39,6 +39,8 @@ export default defineConfig({
           '**/search-grab.test.ts',
           '**/search-interaction.test.ts',
           '**/search-perf.test.ts',
+          '**/gaps-interaction.test.ts',
+          '**/gaps-perf.test.ts',
         ]),
     ],
     // The suite opens real encrypted SQLite files and real loopback HTTP
