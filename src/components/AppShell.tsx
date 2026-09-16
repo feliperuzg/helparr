@@ -23,7 +23,10 @@ const NAV: NavItem[] = [
   { to: '/search', label: 'Search', icon: 'search', key: '2' },
   { to: '/gaps', label: 'Gaps', icon: 'gap', key: '3' },
   { to: '/rename', label: 'Rename', icon: 'rename', key: '4' },
-  { to: '/settings', label: 'Settings', icon: 'settings', key: '5' },
+  // Activity takes `5` and pushes Settings to `6`: the log belongs next to the
+  // screens that write to it, not after the configuration screen.
+  { to: '/operations', label: 'Activity', icon: 'history', key: '5' },
+  { to: '/settings', label: 'Settings', icon: 'settings', key: '6' },
 ];
 
 export default function AppShell({ children }: { children: ReactNode }) {

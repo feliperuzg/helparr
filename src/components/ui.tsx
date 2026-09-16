@@ -137,6 +137,70 @@ export function SearchField({
 }
 
 /* ---------------------------------------------------------------------------
+   FilterChip — a toggle, not a tab. Several can be on at once (indexer scope),
+   so the group is a plain `role="group"` of `aria-pressed` buttons rather than
+   a listbox or a radio group.
+   ------------------------------------------------------------------------- */
+
+/** The wrapper is exported alongside the chip because the accessible group
+ *  label is not optional: a bare row of toggles announces no subject. */
+export function ChipGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="chip-row" role="group" aria-label={label}>
+      {children}
+    </div>
+  );
+}
+
+export function FilterChip({
+  label,
+  selected,
+  onToggle,
+  count,
+  degraded = false,
+  degradedReason,
+}: {
+  label: string;
+  selected: boolean;
+  onToggle: () => void;
+  /** Rendered trailing and muted. `0` is shown — an explicit zero is a fact. */
+  count?: number;
+  /** Unhealthy scope: visible, focusable, and inert until it answers again. */
+  degraded?: boolean;
+  degradedReason?: string;
+}) {
+  // Glyph first, colour second: selection has to survive a monochrome display
+  // and a colour-blind operator, so `●` / `○` / `⚠` carry it on their own
+  // (DESIGN.md §7). Hidden from assistive tech, which reads `aria-pressed`.
+  const glyph = degraded ? '⚠' : selected ? '●' : '○';
+
+  const className = [
+    'filter-chip',
+    selected && !degraded ? 'is-on' : '',
+    degraded ? 'is-degraded' : '',
+  ].filter(Boolean).join(' ');
+
+  return (
+    <button
+      type="button"
+      className={className}
+      // Not the `disabled` attribute: a disabled button drops out of the tab
+      // order, and the operator would never reach the explanation for why the
+      // indexer cannot be scoped to.
+      aria-pressed={selected}
+      aria-disabled={degraded || undefined}
+      title={degraded ? degradedReason : undefined}
+      onClick={() => { if (!degraded) onToggle(); }}
+    >
+      <span className="filter-chip__glyph" aria-hidden="true">{glyph}</span>
+      <span className="filter-chip__label">{label}</span>
+      {count === undefined ? null : <span className="filter-chip__count">{count}</span>}
+      {degraded && degradedReason ? <span className="sr-only">{degradedReason}</span> : null}
+    </button>
+  );
+}
+
+/* ---------------------------------------------------------------------------
    Inspector — detail opens beside the list, never over it (DESIGN.md §5).
    ------------------------------------------------------------------------- */
 export function Inspector({
@@ -144,16 +208,19 @@ export function Inspector({
   title,
   onClose,
   footer,
+  label = 'Queue item detail',
   children,
 }: {
   eyebrow: ReactNode;
   title: ReactNode;
   onClose: () => void;
   footer?: ReactNode;
+  /** What the panel is showing. Two panels on one screen must not share a name. */
+  label?: string;
   children: ReactNode;
 }) {
   return (
-    <aside className="inspector" aria-label="Queue item detail">
+    <aside className="inspector" aria-label={label}>
       <div className="inspector__head">
         <div style={{ minWidth: 0, flex: 1 }}>
           <div className="inspector__eyebrow">{eyebrow}</div>
@@ -221,9 +288,20 @@ export function KeyboardHints({ items }: { items: Array<[string[], string]> }) {
 }
 
 /* ---------------------------------------------------------------------------
-   Modal — reserved for blocking confirmations (DESIGN.md §5). Traps Escape
-   and restores focus to the trigger on close.
+   Modal — reserved for blocking confirmations (DESIGN.md §5). Traps Tab and
+   Escape, and restores focus to the trigger on close.
    ------------------------------------------------------------------------- */
+
+/** Everything the platform considers focusable that a dialog can contain. */
+const FOCUSABLE = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 export function Modal({
   title,
   onClose,
@@ -243,7 +321,39 @@ export function Modal({
     const previouslyFocused = document.activeElement as HTMLElement | null;
     ref.current?.focus();
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
+      if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
+      if (e.key !== 'Tab') return;
+
+      // `aria-modal="true"` tells assistive tech that nothing behind the dialog
+      // exists. Without this the claim is false for the keyboard: Tab walks off
+      // the footer into the sidebar, and the operator is editing a screen the
+      // browser says is not there.
+      const root = ref.current;
+      if (!root) return;
+      const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => {
+        // A radio group is one tab stop, not one per radio — the checked one,
+        // or the first when none is. Counting each radio separately puts the
+        // "first stop" behind the group, and Shift+Tab walks straight past it.
+        if (!(el instanceof HTMLInputElement) || el.type !== 'radio' || !el.name) return true;
+        const group = root.querySelectorAll<HTMLInputElement>(
+          `input[type="radio"][name="${CSS.escape(el.name)}"]`,
+        );
+        return el === ([...group].find((radio) => radio.checked) ?? group[0]);
+      });
+      const active = document.activeElement as HTMLElement | null;
+
+      if (items.length === 0) {
+        // A dialog with nothing to focus still holds the keyboard; the panel
+        // itself is the only stop.
+        e.preventDefault();
+        root.focus();
+        return;
+      }
+      const edge = e.shiftKey ? items[0] : items[items.length - 1];
+      if (active === edge || active === root || !root.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? items[items.length - 1] : items[0]).focus();
+      }
     }
     window.addEventListener('keydown', onKey, true);
     return () => {

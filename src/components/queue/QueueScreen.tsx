@@ -10,7 +10,7 @@ import QueueInspector from '@/components/queue/QueueInspector';
 import QueueTable, { filterRecords, sortRecords, type Sort } from '@/components/queue/QueueTable';
 import RemovalPreview from '@/components/queue/RemovalPreview';
 import { DEFAULT_REFRESH_MS, useQueue, useRemoveFromQueue } from '@/components/queue/useQueue';
-import { useQueueKeyboard, useSelection } from '@/components/queue/useQueueKeyboard';
+import { useListKeyboard, useSelection } from '@/components/useListKeyboard';
 import {
   BulkBar, Callout, EmptyState, KeyboardHints, ScreenHead, SearchField, StatusBadge,
   ToastStack, useToasts,
@@ -107,7 +107,7 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
     return true;
   }, [openId]);
 
-  const { cursor, setCursor } = useQueueKeyboard({
+  const { cursor, setCursor } = useListKeyboard({
     count: visible.length,
     onToggleSelect: onToggleIndex,
     onOpen,

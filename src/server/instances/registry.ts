@@ -10,6 +10,7 @@ import {
 } from '@/lib/types';
 import { getDb } from '@/server/db';
 import { ArrClient } from '@/server/clients/arr';
+import { ProwlarrClient } from '@/server/clients/prowlarr';
 import { QbitClient, clearSession } from '@/server/clients/qbit';
 import type { InstanceClient } from '@/server/clients/types';
 import { disposeBreaker } from '@/server/resilience/breaker';
@@ -99,6 +100,11 @@ export function buildClient(
 
   if (kind === 'download-client') {
     return new QbitClient(id, { kind, baseUrl, credential });
+  }
+  // Prowlarr shares the credential and the probe but none of the queue or grab
+  // surface — it is an indexer manager, not a library manager.
+  if (kind === 'prowlarr') {
+    return new ProwlarrClient({ kind, baseUrl, credential });
   }
   return new ArrClient({ kind, baseUrl, credential });
 }

@@ -56,6 +56,46 @@ export interface FakeArr {
   failRemovals: (recordIds: number[]) => void;
   /** DELETEs received, with the flags they carried. */
   removals: Array<{ recordId: number; flags: Record<string, string> }>;
+
+  /* ── Manual grab surface (indexer-search-grab) ─────────────────────────── */
+
+  /** What `/parse` makes of a release name. `null` answers "nothing". */
+  setParse: (body: unknown) => void;
+  /** What `/release?seriesId=N` returns — the instance's own candidates. */
+  setCandidates: (candidates: unknown[]) => void;
+  /**
+   * What `/release/push` answers. An HTTP status stands in for the transport
+   * failing; the object form is the upstream answering with a verdict.
+   */
+  setPushResult: (result: { rejected?: boolean; rejections?: unknown[] } | number) => void;
+  /**
+   * Every push received, with its body. The *count* is the assertion that
+   * matters most: FR8 is a claim about how many of these exist, not about
+   * what they contain.
+   */
+  pushes: Array<{ body: Record<string, unknown> }>;
+}
+
+/** A `/parse` body that resolves to a Sonarr series. */
+export function parsedSeries(options: {
+  id?: number;
+  title?: string;
+  season?: number;
+  episode?: number;
+  quality?: string;
+  releaseGroup?: string;
+} = {}): unknown {
+  return {
+    series: { id: options.id ?? 42, title: options.title ?? 'Show' },
+    episodes: [{
+      seasonNumber: options.season ?? 1,
+      episodeNumber: options.episode ?? 1,
+    }],
+    parsedEpisodeInfo: {
+      quality: { quality: { name: options.quality ?? 'WEBDL-1080p' } },
+      releaseGroup: options.releaseGroup ?? 'GROUP',
+    },
+  };
 }
 
 /**
@@ -81,6 +121,10 @@ export async function startFakeArr(options: {
   const apiBase = options.apiBase ?? '/api/v3';
   const hits: FakeArr['hits'] = [];
   const removals: FakeArr['removals'] = [];
+  const pushes: FakeArr['pushes'] = [];
+  let parseBody: unknown = null;
+  let candidates: unknown[] = [];
+  let pushResult: { rejected?: boolean; rejections?: unknown[] } | number = {};
 
   const server: Server = createServer((req, res) => {
     const apiKey = (req.headers['x-api-key'] as string | undefined) ?? null;
@@ -139,6 +183,41 @@ export async function startFakeArr(options: {
       return;
     }
 
+    if (url.pathname === `${apiBase}/parse`) {
+      // `null` is what a real *arr returns for a name it cannot place, and the
+      // unresolved branch of the confirmation is built on exactly this answer.
+      send(200, parseBody);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === `${apiBase}/release`) {
+      send(200, candidates);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === `${apiBase}/release/push`) {
+      let raw = '';
+      req.on('data', (chunk) => { raw += chunk; });
+      req.on('end', () => {
+        try {
+          pushes.push({ body: JSON.parse(raw || '{}') as Record<string, unknown> });
+        } catch {
+          pushes.push({ body: { unparseable: raw } });
+        }
+        if (typeof pushResult === 'number') {
+          send(pushResult, { message: 'Push failed' });
+          return;
+        }
+        // Sonarr answers with the pushed release, carrying the verdict.
+        send(200, {
+          title: (pushes.at(-1)?.body.title as string) ?? '',
+          rejected: pushResult.rejected ?? false,
+          rejections: pushResult.rejections ?? [],
+        });
+      });
+      return;
+    }
+
     if (req.method === 'DELETE' && url.pathname.startsWith(`${apiBase}/queue/`)) {
       const recordId = Number(url.pathname.slice(`${apiBase}/queue/`.length));
       removals.push({
@@ -174,6 +253,10 @@ export async function startFakeArr(options: {
     url: `http://127.0.0.1:${port}`,
     hits,
     removals,
+    pushes,
+    setParse: (body) => { parseBody = body; },
+    setCandidates: (next) => { candidates = next; },
+    setPushResult: (result) => { pushResult = result; },
     setMode: (next) => { mode = next; },
     setQueue: (records) => { queue = records; },
     setTotalRecords: (total) => { totalOverride = total; },

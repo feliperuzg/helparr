@@ -522,11 +522,10 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 .icon-btn:hover { background: var(--color-primary-subtle); color: var(--color-foreground); }
 .icon-btn:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 
-@media (pointer: coarse) {
-  .btn { height: 44px; padding: 0 var(--space-4); font-size: 14px; }
-  .btn-sm { height: 36px; }
-  .icon-btn { width: 44px; height: 44px; }
-}
+/* The coarse-pointer overrides for these live at the end of this file, after
+   every component rule they have to beat — a media query adds no specificity,
+   so a `.filter-chip` written later in the cascade wins over one written here
+   (DESIGN.md §7, §8). */
 
 /* =========================================================================
    FORM CONTROLS (DESIGN.md §4)
@@ -894,6 +893,196 @@ select.input {
 }
 
 /* -------------------------------------------------------------------------
+   Machine values in the inspector — monospace, middle-truncated, copyable
+   (FR14, REQ-SEARCH-005). The truncation is visual only; `title` and the
+   clipboard carry the whole string.
+   ------------------------------------------------------------------------- */
+.monoval { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 100%; }
+.monoval__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Visible always, not on hover: a copy control the operator has to discover by
+   sweeping the pointer is one a keyboard user never finds at all. */
+.monoval__copy { flex: none; width: 22px; height: 22px; }
+
+/* -------------------------------------------------------------------------
+   The one control that makes an instance run a live indexer search (ADR-5).
+   ------------------------------------------------------------------------- */
+.evaluate-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.evaluate-row .input { flex: 1; min-width: 0; }
+.evaluate-row .btn { flex: none; }
+
+/* -------------------------------------------------------------------------
+   Search toolbar — a form, not a filter bar. The query field and the Search
+   button sit on their own line so Enter has one obvious destination; scope and
+   category sit below because they qualify a search rather than start one.
+   ------------------------------------------------------------------------- */
+.stoolbar {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.stoolbar__query { display: flex; gap: var(--space-2); align-items: center; }
+.stoolbar__query .search { flex: 1; min-width: 0; }
+.stoolbar__query .btn { flex: none; }
+
+.stoolbar__row {
+  display: flex; align-items: center; gap: var(--space-2);
+  /* Chips wrap to a second row rather than scrolling sideways — a scope the
+     operator cannot see is a scope they will forget is applied. */
+  flex-wrap: wrap;
+}
+.stoolbar__label {
+  font-family: var(--font-heading);
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--color-text-subtle);
+  flex: none;
+}
+.stoolbar__row .chip-row { flex: 1; min-width: 0; }
+.stoolbar__select { width: auto; min-width: 150px; }
+.stoolbar__seeders { width: 76px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Disabled toolbar controls stay legible — the outage callout above them is
+   the explanation, and a field faded to illegibility reads as a rendering bug
+   rather than as a deliberate state (REQ-SEARCH-008). */
+.stoolbar .input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--color-surface);
+}
+
+@media (max-width: 767px) {
+  /* ≥44px targets on touch (NFR7). */
+  .stoolbar .input, .stoolbar .btn { height: 44px; }
+  .stoolbar__query { flex-wrap: wrap; }
+  .stoolbar__query .btn { width: 100%; justify-content: center; }
+}
+
+/* -------------------------------------------------------------------------
+   Results grid (search) — the queue's grid minus the select column, because
+   search has no bulk action and therefore no row that can be selected without
+   being opened. The rules it does not share with .qgrid are the reason it is a
+   separate block rather than a modifier: different columns, different collapse
+   order, no selected state.
+   ------------------------------------------------------------------------- */
+.rgrid {
+  --rgrid-cols:
+    minmax(0, 1fr)        /* release  */
+    minmax(0, 0.42fr)     /* indexer  */
+    84px                  /* size     */
+    64px                  /* seeders  */
+    64px                  /* leechers */
+    64px;                 /* age      */
+  display: flex; flex-direction: column;
+  min-height: 0;
+  font-size: 12px;
+}
+
+.rgrid__row {
+  display: grid;
+  grid-template-columns: var(--rgrid-cols);
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.rgrid__head {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--color-surface);
+  font-family: var(--font-heading);
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--color-text-subtle);
+  user-select: none;
+}
+.rgrid__head .rgrid__cell { padding: var(--space-2); }
+/* Numeric headers align with the numbers beneath them, which means the button
+   has to move, not just the text — a right-aligned span with a left-aligned
+   button inside it looks centred. */
+.rgrid__head .rgrid__cell--num { display: flex; justify-content: flex-end; }
+
+.rgrid__sort {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 0; padding: 0;
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  color: inherit; cursor: pointer;
+}
+.rgrid__sort:hover { color: var(--color-foreground); }
+.rgrid__sort:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+.rgrid__sort .sort-caret { font-size: 8px; line-height: 1; color: var(--color-primary); }
+
+/* Sized explicitly by the component for the same reason .qgrid__scroll is —
+   `contain: strict` includes size containment, so this element cannot derive a
+   height from absolutely-positioned rows. This only clamps it. */
+.rgrid__scroll { min-height: 0; max-height: min(58vh, 680px); overflow-y: auto; contain: strict; }
+.rgrid__canvas { position: relative; width: 100%; }
+
+.rgrid__body-row {
+  position: absolute; top: 0; left: 0; width: 100%;
+  height: var(--row-height);
+  cursor: pointer;
+  transition: background var(--duration-instant) linear;
+}
+.rgrid__body-row:hover { background: var(--color-primary-subtle); }
+.rgrid__body-row.is-cursor { background: var(--color-primary-muted); }
+.rgrid__body-row.is-cursor .rgrid__cell:first-child {
+  box-shadow: inset 2px 0 0 var(--color-border-strong);
+}
+/* The row the inspector is showing. Tinted *and* edged, so which row the panel
+   belongs to survives a monochrome screen. */
+.rgrid__body-row.is-open { background: var(--color-accent-subtle); }
+.rgrid__body-row.is-open .rgrid__cell:first-child {
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.rgrid__body-row:focus-visible { outline: 2px solid var(--color-ring); outline-offset: -2px; }
+
+.rgrid__cell {
+  padding: 0 var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rgrid__cell--num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Freeleech. A text badge with a border — never a colour on its own, because
+   the colour channel is not available to every reader (DESIGN.md §7). */
+.rgrid__flag {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 0 4px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 9px; font-weight: 600; line-height: 14px;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+  vertical-align: baseline;
+}
+
+/* Responsive collapse, per wireframes/screen-search.md. Release and Seeders
+   never drop: the title is what is being grabbed and the seeder count is what
+   decides whether it will land. What collapses moves into the inspector, it is
+   not lost. */
+@media (max-width: 1199px) {
+  .rgrid { --rgrid-cols: minmax(0, 1fr) minmax(0, 0.42fr) 84px 64px; }
+  .rgrid .rcol-leechers, .rgrid .rcol-age { display: none; }
+}
+@media (max-width: 767px) {
+  .rgrid { --rgrid-cols: minmax(0, 1fr) 64px; }
+  .rgrid .rcol-indexer, .rgrid .rcol-size { display: none; }
+}
+
+/* -------------------------------------------------------------------------
    Degraded banner — one line per unreadable instance, each naming the
    instance and offering its own retry (REQ-QUEUE-007, -008).
    ------------------------------------------------------------------------- */
@@ -1137,6 +1326,54 @@ select.input {
 .callout--ok    > svg { color: var(--color-status-ok); }
 
 /* =========================================================================
+   OPERATION LOG — five lines per row, no grid. The rows are read, not scanned.
+   ========================================================================= */
+.oplog { list-style: none; margin: 0; padding: 0; overflow: hidden; }
+.oplog__row { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border-subtle); }
+.oplog__row:last-child { border-bottom: 0; }
+
+.oplog__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.oplog__outcome { font-size: 12px; font-weight: 600; }
+.oplog__at { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.oplog__summary { font-size: 12px; margin-top: var(--space-2); }
+.oplog__title { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
+.oplog__meta { font-size: 11px; margin-top: 2px; }
+.oplog__detail { margin-top: var(--space-2); }
+
+/* The timestamp drops under the outcome word before the row starts wrapping
+   mid-sentence. */
+@media (max-width: 1199px) {
+  .oplog__head { align-items: flex-start; }
+  .oplog__at { flex-basis: 100%; }
+}
+
+@media (max-width: 767px) {
+  /* One scrolling row of chips rather than two wrapped ones: the filter is a
+     single axis and stacking it reads as two separate controls. */
+  .oplog-toolbar .chip-row { flex-wrap: nowrap; overflow-x: auto; width: 100%; padding-bottom: var(--space-1); }
+  /* Destructive, and directly under a scrollable strip — it gets a full-width
+     44px target rather than the compact toolbar height. */
+  .oplog-purge { width: 100%; height: 44px; }
+}
+
+/* =========================================================================
+   GRAB CONFIRMATION — the one dialog that precedes a write to an *arr
+   ========================================================================= */
+.dest-row { border: 0; padding: 0; margin: var(--space-4) 0 0; }
+.dest-row__legend { padding: 0; font-size: 11px; color: var(--color-text-muted); }
+.dest-row__chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* The radio inside is `sr-only`, so the ring has to be drawn by the label it
+   is hiding behind — otherwise the destination a keyboard operator is about to
+   choose has no visible indication at all. */
+.dest-chip:has(input:focus-visible) { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+.dest-chip:has(input:disabled) { cursor: not-allowed; opacity: 0.55; }
+
+.grab-resolve { margin: var(--space-4) 0; display: grid; gap: var(--space-2); }
+.grab-target { padding: var(--space-3); background: var(--color-surface-sunken); }
+
+/* =========================================================================
    RENAME DIFF
    ========================================================================= */
 .diff { font-family: var(--font-mono); font-size: 11px; line-height: 1.6; }
@@ -1155,8 +1392,8 @@ select.input {
 .chip-row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 
 .filter-chip {
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  height: 24px; padding: 0 var(--space-2);
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  min-height: 32px; padding: 0 var(--space-3);
   font-size: 11px; font-weight: 500;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-subtle);
@@ -1165,8 +1402,24 @@ select.input {
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-productive), color var(--duration-fast) var(--ease-productive);
 }
-.filter-chip:hover { color: var(--color-foreground); border-color: var(--color-border); }
+.filter-chip:hover { color: var(--color-foreground); background: var(--color-surface-elevated); border-color: var(--color-border); }
+/* Always visible, never `outline: none` — this is the only affordance telling a
+   keyboard operator which scope the next Space will toggle. */
+.filter-chip:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 .filter-chip.is-on { background: var(--color-primary-muted); color: var(--color-foreground); border-color: var(--color-border-strong); }
+
+/* Dashed rather than faded: opacity alone would push the label under the
+   contrast floor, and "unreachable" has to stay readable to be actionable. */
+.filter-chip.is-degraded {
+  border-style: dashed;
+  border-color: var(--color-status-warn);
+  cursor: not-allowed;
+  background: var(--color-surface-sunken);
+}
+.filter-chip.is-degraded:hover { background: var(--color-surface-sunken); }
+.filter-chip__glyph { font-size: 10px; line-height: 1; flex: none; }
+.filter-chip__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-chip__count { color: var(--color-text-subtle); font-variant-numeric: tabular-nums; }
 
 .hint-row {
   display: flex; align-items: center; gap: var(--space-3);
@@ -1242,6 +1495,26 @@ select.input {
 @media (max-width: 560px) {
   .table .col-hide-xs { display: none; }
   .bulkbar { flex-wrap: wrap; }
+}
+
+/* =========================================================================
+   COARSE POINTER (NFR7, DESIGN.md §7 §8) — last in the file on purpose
+   ========================================================================= */
+@media (pointer: coarse) {
+  .btn { height: 44px; padding: 0 var(--space-4); font-size: 14px; }
+  /* No exception for the small variant. `btn-sm` is a density choice for a
+     mouse; on a finger it is a 24px target inside a design contract that says
+     44, and the controls wearing it are the consequential ones — Grab, Purge,
+     Remove. */
+  .btn-sm { height: 44px; }
+  .icon-btn { width: 44px; height: 44px; }
+  .filter-chip { min-height: 44px; padding: 0 var(--space-4); }
+  /* Text fields and selects are targets too: tapping one is how it is reached. */
+  .input { height: 44px; }
+  /* A column header is a target as well — mis-tapping one re-sorts the list.
+     Its width belongs to the column, and a six-column grid has no 44px to give
+     a numeric one on a phone; the height is ours, and is set. */
+  .rgrid__sort, .qgrid__sort { min-height: 44px; }
 }
 
 /* =========================================================================

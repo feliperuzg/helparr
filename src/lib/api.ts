@@ -1,10 +1,18 @@
 import type {
+  EvaluatedRelease,
+  GrabOutcome,
   HealthResponse,
   InstanceDto,
   InstanceKind,
+  OperationFilter,
+  OperationsRead,
+  ParsedTarget,
   QueueResponse,
   RemovalOutcome,
   RemovalRequest,
+  SearchAvailability,
+  SearchCriteria,
+  SearchResponse,
   TestOutcome,
 } from './types';
 
@@ -75,6 +83,18 @@ export interface InstanceInput {
   testToken?: string;
 }
 
+/** The shape `POST /api/grab` accepts, mirrored so the caller cannot omit a field. */
+export interface GrabInput {
+  instanceId: string;
+  title: string;
+  downloadUrl: string;
+  protocol: 'torrent' | 'usenet';
+  publishDate: string;
+  indexer: string | null;
+  /** What the confirmation named — carried through to the log and the toast. */
+  entityRef: string | null;
+}
+
 export const api = {
   listInstances: () =>
     request<{ instances: InstanceDto[] }>('/api/instances').then((r) => r.instances),
@@ -94,6 +114,51 @@ export const api = {
         + `&skipRedownload=${flags.skipRedownload}`,
       { method: 'DELETE' },
     ),
+
+  /* ── Indexer search and manual grab ────────────────────────────────────── */
+
+  indexers: (signal?: AbortSignal) =>
+    request<SearchAvailability>('/api/search/indexers', { signal }),
+
+  // `SearchResponse` is a union on `available`: Prowlarr being down is a 200
+  // describing the outage, so it arrives here as data rather than as a throw.
+  search: (criteria: SearchCriteria, signal?: AbortSignal) =>
+    request<SearchResponse>('/api/search', {
+      method: 'POST',
+      body: JSON.stringify(criteria),
+      signal,
+    }),
+
+  resolveTarget: (body: { instanceId: string; title: string }, signal?: AbortSignal) =>
+    request<ParsedTarget>('/api/search/resolve', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // Never called on render. This makes the instance run a live indexer search
+  // of its own, so it is wired to an explicit control (ADR-5).
+  evaluateRelease: (
+    body: { instanceId: string; title: string; infoHash: string | null },
+    signal?: AbortSignal,
+  ) =>
+    request<EvaluatedRelease>('/api/search/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // No `signal`. A push that may already have been accepted must not be
+  // abandoned mid-flight — see the route for why.
+  grab: (body: GrabInput) =>
+    request<GrabOutcome>('/api/grab', { method: 'POST', body: JSON.stringify(body) }),
+
+  operations: (filter: OperationFilter, signal?: AbortSignal) =>
+    request<OperationsRead>(`/api/operations?filter=${filter}`, { signal }),
+
+  /** `expect` is the count the confirmation stated; a mismatch is refused. */
+  purgeOperations: (expect: number) =>
+    request<{ purged: number }>(`/api/operations?expect=${expect}`, { method: 'DELETE' }),
 
   testConnection: (body: { kind: InstanceKind; baseUrl: string; credential: CredentialInput }) =>
     request<TestOutcome>('/api/instances/test', { method: 'POST', body: JSON.stringify(body) }),

@@ -35,6 +35,10 @@ const paths = {
   lock: <><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></>,
   plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
+  copy: <><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+  /* Activity — a clock with a rewind arrow. The operation log is history, not
+     live telemetry, and `clock` alone already means "waiting" on this screen. */
+  history: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 8v4.5l3 1.8" /></>,
 } satisfies Record<string, ReactElement>;
 
 export type IconName = keyof typeof paths;

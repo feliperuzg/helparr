@@ -312,14 +312,12 @@ async function main() {
   console.log(`series in library: ${series.length}`);
 
   let sonarrReleases = null;
-  let searchTarget = null;
 
   if (series.length > 0) {
     // Prefer a monitored series with episodes already on disk, because a
     // rejection like "Existing file meets cutoff" is exactly what we want to
     // see — it is the failure mode the whole feature exists to surface.
     const candidate = series.find((s) => s.monitored && s.statistics?.episodeFileCount > 0) ?? series[0];
-    searchTarget = candidate.title;
     console.log(`searching against: ${clip(candidate.title, 40)} (id ${candidate.id})`);
     console.log('  (this runs a live interactive search; it can take a minute)');
     sonarrReleases = await get(
@@ -331,8 +329,7 @@ async function main() {
     const movies = await get('Radarr', radarrUrl, radarrKey, '/api/v3/movie');
     if (movies.length > 0) {
       const candidate = movies.find((m) => m.monitored && m.hasFile) ?? movies[0];
-      searchTarget = candidate.title;
-      console.log(`no series; searching Radarr against: ${clip(candidate.title, 40)} (id ${candidate.id})`);
+        console.log(`no series; searching Radarr against: ${clip(candidate.title, 40)} (id ${candidate.id})`);
       sonarrReleases = await get('Radarr', radarrUrl, radarrKey, '/api/v3/release', { movieId: candidate.id }, 180_000);
     }
   }

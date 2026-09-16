@@ -1,9 +1,12 @@
 import 'server-only';
 
 import type {
+  IndexerRead,
   InstanceKind,
+  ParsedTarget,
   QueueErrorKind,
   QueueRecord,
+  ReleaseRead,
   RemovalRequest,
   TorrentState,
 } from '@/lib/types';
@@ -131,6 +134,78 @@ export function isArrQueueClient(client: InstanceClient): client is ArrQueueClie
 
 export function isTorrentClient(client: InstanceClient): client is TorrentClient {
   return typeof (client as TorrentClient).torrents === 'function';
+}
+
+/* ── Search and grab capabilities (indexer-search-grab, T3) ───────────────── */
+
+/** One Prowlarr query, already narrowed to the indexers it should hit. */
+export interface SearchScope {
+  query: string;
+  /** Empty means every indexer — expressed by omitting the parameter (ADR-1). */
+  indexerIds: number[];
+  categories: number[];
+}
+
+export interface SearchClient extends InstanceClient {
+  indexers(signal?: AbortSignal): Promise<ClientResult<IndexerRead[]>>;
+  search(scope: SearchScope, signal?: AbortSignal): Promise<ClientResult<ReleaseRead[]>>;
+}
+
+/** What `/release/push` needs. Notably not a `guid` or an `indexerId` (ADR-2). */
+export interface ReleaseDescriptor {
+  title: string;
+  downloadUrl: string;
+  protocol: 'torrent' | 'usenet';
+  publishDate: string;
+}
+
+/**
+ * One release as the destination instance's *own* interactive search reports
+ * it. `rejections` is the field the whole evaluation exists for; the identity
+ * fields are only there to match it back to the release the operator picked.
+ */
+export interface ReleaseCandidate {
+  title: string;
+  infoHash: string | null;
+  guid: string | null;
+  rejections: string[];
+}
+
+/**
+ * The push response. `accepted: false` is a successful request that produced a
+ * negative answer — it is not a transport failure and is never reported as
+ * "grab failed" (FR9).
+ */
+export interface PushOutcome {
+  accepted: boolean;
+  rejections: string[];
+}
+
+export interface ReleaseClient extends InstanceClient {
+  parse(title: string, signal?: AbortSignal): Promise<ClientResult<ParsedTarget>>;
+  evaluate(
+    target: { seriesId?: number | null; movieId?: number | null },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ReleaseCandidate[]>>;
+  pushRelease(
+    release: ReleaseDescriptor,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<PushOutcome>>;
+}
+
+/**
+ * Narrowed by kind for the same reason `isArrQueueClient` is: Prowlarr is the
+ * only instance that can search, and Sonarr/Radarr are the only ones that can
+ * be grabbed into. Method-presence checks would let a misconfigured kind
+ * through to an endpoint that 404s.
+ */
+export function isSearchClient(client: InstanceClient): client is SearchClient {
+  return client.kind === 'prowlarr' && typeof (client as SearchClient).search === 'function';
+}
+
+export function isReleaseClient(client: InstanceClient): client is ReleaseClient {
+  return (client.kind === 'sonarr' || client.kind === 'radarr')
+    && typeof (client as ReleaseClient).pushRelease === 'function';
 }
 
 export interface ClientConfig {

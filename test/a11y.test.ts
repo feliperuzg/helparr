@@ -3,13 +3,21 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { login, seedInstance, startApp, type AppServer } from './helpers/appServer';
-import { fakeQueue, startFakeArr, type FakeArr } from './helpers/fakeArr';
+import { fakeQueue, parsedSeries, startFakeArr, type FakeArr } from './helpers/fakeArr';
+import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fakeProwlarr';
 
 /**
  * T20, T24 / AC14, NFR7 — Login, Settings and the Overview grid pass an axe
  * WCAG AA scan with zero violations, plus the three grid properties axe cannot
  * see: one tab stop, `aria-sort` on every sortable column, and row indices that
  * refer to the full list rather than the rendered window.
+ *
+ * T25 / NFR5, DESIGN.md §7 extends the same gate to Indexer Search — empty,
+ * with results, with the inspector open, with the confirmation open, and with
+ * Prowlarr down — and to Activity, plus the properties a rule engine cannot
+ * check: `aria-pressed` on the scope chips, a busy results region while a
+ * search is in flight, a dialog that actually holds the keyboard, 44px targets
+ * on a coarse pointer, and outcomes stated in words rather than in colour.
  *
  * This drives the real standalone build in a real browser rather than rendering
  * components under jsdom. NFR7's requirements are mostly *rendered* properties
@@ -38,6 +46,11 @@ let context: BrowserContext;
 let page: Page;
 let sonarr: FakeArr;
 let radarr: FakeArr;
+let prowlarr: FakeProwlarr;
+
+/** Two indexers, one of which fails on demand so the degraded chip and the
+ *  error banner are part of a scanned surface rather than only of a unit test. */
+const INDEXERS = [{ id: 4, name: 'TorrentDay' }, { id: 7, name: 'Nyaa' }];
 
 async function scan(context?: string) {
   // Let entry animations finish first. axe samples computed colours at the
@@ -73,6 +86,38 @@ async function openOverview() {
   await page.waitForSelector('.qgrid__body-row');
 }
 
+/** Indexer Search, loaded, with Prowlarr's roster in the toolbar. */
+async function openSearch() {
+  await page.goto(`${ORIGIN}/search`);
+  await page.waitForSelector('form.stoolbar');
+  await page.waitForSelector('.stoolbar .filter-chip:has-text("TorrentDay")');
+}
+
+/** The one search this screen ever runs: the one the operator asked for. */
+async function runSearch(query = 'show') {
+  await page.fill('#search-query', query);
+  await page.click('form.stoolbar button[type="submit"]');
+  await expect
+    .poll(() => page.locator('.rgrid__body-row').count(), { timeout: 20_000 })
+    .toBeGreaterThan(0);
+}
+
+/**
+ * Row → inspector → confirmation, settled on Sonarr.
+ *
+ * Radarr is still answering 401 from the Settings test, so the destination is
+ * chosen explicitly rather than left to whichever instance the roster lists
+ * first — the scanned surface has to be the same one every run.
+ */
+async function openGrabDialog() {
+  await page.click('.rgrid__body-row >> nth=0');
+  await page.waitForSelector('.inspector');
+  await page.click('.inspector__foot .btn-primary');
+  await page.waitForSelector('.modal[role="dialog"]');
+  await page.click('.dest-chip:has-text("Sonarr")');
+  await page.waitForSelector('.modal .grab-target');
+}
+
 // Each scan boots axe into the page and walks the whole tree; the suite-wide
 // 20s budget is sized for in-process tests, not for that.
 describe('WCAG AA', { timeout: 60_000 }, () => {
@@ -86,6 +131,17 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     // Callout and banner — an error surface that only renders when something is
     // actually wrong is exactly the one that escapes review.
     radarr = await startFakeArr({ apiKey: 'radarr-key', version: '5.14.0.9383' });
+    // What Sonarr makes of a release title, for the grab confirmation.
+    sonarr.setParse(parsedSeries());
+
+    prowlarr = await startFakeProwlarr({ apiKey: 'prowlarr-key', indexers: INDEXERS });
+    // One freeleech result, so the FL badge — the flag that must not be carried
+    // by colour — is on screen during the scans.
+    prowlarr.setResults(4, [
+      ...fakeReleases(4, 'TorrentDay', 2),
+      ...fakeReleases(4, 'TorrentDay', 1, { guid: 'fl-1', title: 'Show.S02E01.2160p.WEB-DL-GROUP', indexerFlags: ['freeleech'] }),
+    ]);
+    prowlarr.setResults(7, fakeReleases(7, 'Nyaa', 2));
 
     app = await startApp({ port: PORT, password: PASSWORD });
 
@@ -104,6 +160,7 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     await app?.close();
     await sonarr?.close();
     await radarr?.close();
+    await prowlarr?.close();
   });
 
   it('Login has zero violations', async () => {
@@ -264,5 +321,241 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     }).toBe(true);
     const atBottom = await indicesNow();
     expect(atBottom.length).toBeLessThan(QUEUE_SIZE / 2);
+  });
+
+  /* ---------------------------------------------------------------------
+     T25 — Indexer Search and Activity.
+     --------------------------------------------------------------------- */
+
+  it('Indexer Search has zero violations before any search has run', async () => {
+    await seedInstance(page, 'prowlarr', 'Prowlarr', prowlarr.url, {
+      type: 'api-key', apiKey: 'prowlarr-key',
+    });
+
+    await openSearch();
+    // The state the screen spends most of its life in: a toolbar, a roster of
+    // chips, and an empty state explaining why nothing has been searched.
+    await page.waitForSelector('.empty');
+    await scan('Search (empty)');
+  });
+
+  it('Indexer Search has zero violations with results, a failed indexer and the inspector open', async () => {
+    // Nyaa fails, so the scan covers three surfaces at once: the grid, the
+    // degraded chip, and the banner naming what did not answer.
+    prowlarr.failSearches([7], 500);
+    await openSearch();
+    await runSearch();
+    await page.waitForSelector('.banner');
+    await scan('Search (results, degraded indexer)');
+
+    await page.click('.rgrid__body-row >> nth=0');
+    await page.waitForSelector('.inspector');
+    await scan('Search (inspector open)');
+    prowlarr.failSearches([]);
+  });
+
+  it('Indexer Search has zero violations with the grab confirmation open', async () => {
+    await openSearch();
+    await runSearch();
+    await openGrabDialog();
+    // A modal is its own a11y surface, and this one is the only screen in
+    // helparr that precedes a write.
+    await scan('Search (grab confirmation)');
+    await page.keyboard.press('Escape');
+  });
+
+  it('holds the keyboard inside the grab confirmation and gives it back on Escape', async () => {
+    await openSearch();
+    await runSearch();
+    await openGrabDialog();
+
+    const inside = () => page.evaluate(
+      () => Boolean((document.activeElement as HTMLElement | null)?.closest('.modal')),
+    );
+
+    // `aria-modal="true"` says nothing behind the dialog exists. Ten tabs is
+    // more than the dialog has stops, so an untrapped Tab would be out of it
+    // and into the sidebar well before the tenth.
+    for (let i = 0; i < 10; i += 1) {
+      await page.keyboard.press('Tab');
+      expect(await inside(), `Tab ${i + 1} escaped the dialog`).toBe(true);
+    }
+    // Backwards too — the trap that only holds one direction is the common one.
+    for (let i = 0; i < 10; i += 1) {
+      await page.keyboard.press('Shift+Tab');
+      expect(await inside(), `Shift+Tab ${i + 1} escaped the dialog`).toBe(true);
+    }
+
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.modal[role="dialog"]').count()).toBe(0);
+
+    // And focus comes back to the control that opened it, rather than being
+    // dropped on the body where the next Tab starts from the top of the page.
+    const returned = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      return { inInspector: Boolean(el?.closest('.inspector')), text: el?.textContent?.trim() ?? '' };
+    });
+    expect(returned.inInspector, `focus landed on "${returned.text}"`).toBe(true);
+  });
+
+  it('Indexer Search has zero violations while Prowlarr is unreachable', async () => {
+    prowlarr.setDown(true);
+    try {
+      await page.goto(`${ORIGIN}/search`);
+      // The outage renders as a callout above an inert toolbar — a described
+      // state, not a thrown error (REQ-SEARCH-008).
+      await page.waitForSelector('.callout');
+      await scan('Search (Prowlarr outage)');
+
+      const disabled = await page.getAttribute('#search-query', 'aria-disabled');
+      expect(disabled).toBe('true');
+    } finally {
+      prowlarr.setDown(false);
+    }
+  });
+
+  it('states the indexer scope with aria-pressed rather than with colour', async () => {
+    await openSearch();
+
+    const pressed = () => page.locator('.stoolbar .filter-chip')
+      .evaluateAll((chips) => chips.map((chip) => [
+        chip.querySelector('.filter-chip__label')?.textContent ?? '',
+        chip.getAttribute('aria-pressed'),
+      ]));
+
+    // "All" is the empty scope, so it is the one chip on at rest.
+    expect(await pressed()).toEqual([
+      ['All', 'true'], ['TorrentDay', 'false'], ['Nyaa', 'false'],
+    ]);
+
+    await page.click('.stoolbar .filter-chip:has-text("TorrentDay")');
+    expect(await pressed()).toEqual([
+      ['All', 'false'], ['TorrentDay', 'true'], ['Nyaa', 'false'],
+    ]);
+
+    // The glyph moves with the state, so the selection survives a monochrome
+    // display: colour is never the only channel (DESIGN.md §7).
+    const glyphs = await page.locator('.stoolbar .filter-chip__glyph')
+      .evaluateAll((spans) => spans.map((span) => span.textContent));
+    expect(glyphs).toEqual(['○', '●', '○']);
+  });
+
+  it('marks the results region busy while a search is in flight', async () => {
+    await openSearch();
+    // Long enough to observe, well inside the route's own 30s budget.
+    prowlarr.stallSearches([4, 7], 1500);
+    try {
+      await page.fill('#search-query', 'show');
+      await page.click('form.stoolbar button[type="submit"]');
+
+      await page.waitForSelector('.section[aria-busy="true"]');
+      // And it says so, once, in a region that existed before the search
+      // started — a live region inserted with its content announces nothing.
+      const status = page.locator('.section[aria-busy="true"] [role="status"]');
+      expect((await status.textContent())?.trim()).toBe('Searching your indexers…');
+
+      await expect
+        .poll(() => page.locator('.rgrid__body-row').count(), { timeout: 20_000 })
+        .toBeGreaterThan(0);
+
+      // Busy is a state, not a decoration: it has to come off when the answer
+      // arrives, and the same region reports what came back.
+      expect(await page.locator('.section[aria-busy="true"]').count()).toBe(0);
+      const settled = (await page.locator('.content__scroll .section [role="status"]').first().textContent()) ?? '';
+      expect(settled).toContain('results · 2 of 2 indexers answered');
+    } finally {
+      prowlarr.stallSearches([], 0);
+    }
+  });
+
+  it('meets the 44px target minimum on a coarse pointer', async () => {
+    // A phone, which in Chromium is not a media override but a context: a
+    // touch-enabled, mobile-metrics context is what makes `(pointer: coarse)`
+    // true, and the phone-sized viewport is what switches the grid to its
+    // narrow rows. `Emulation.setEmulatedMedia` cannot do this — `pointer` is
+    // not one of the features it accepts — so the test opens its own context
+    // rather than dressing up the shared one.
+    const touch = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+    });
+    const desktop = page;
+    try {
+      page = await touch.newPage();
+      // A fresh context carries no session cookie; the instances are already
+      // seeded server-side, so only the login has to be repeated.
+      await login(page, ORIGIN, PASSWORD);
+      await openSearch();
+      await runSearch();
+
+      // Non-vacuous: without this the whole check passes by never entering the
+      // branch it is about.
+      expect(await page.evaluate(() => window.matchMedia('(pointer: coarse)').matches)).toBe(true);
+
+      // Scoped to the screen under test, and the grid rows are in scope: a row
+      // is the only way to open the inspector, so a row *is* a target.
+      const small = await page.evaluate(() => {
+        const targets = document.querySelectorAll<HTMLElement>(
+          'main button, main a[href], main input:not(.sr-only), main select, main .rgrid__body-row',
+        );
+        return [...targets]
+          .filter((el) => el.getBoundingClientRect().height > 0)
+          .map((el) => {
+            const box = el.getBoundingClientRect();
+            return {
+              label: (el.textContent || el.id || el.className).trim().slice(0, 40),
+              h: Math.round(box.height),
+              w: Math.round(box.width),
+              // A column header's width is the column's, which a six-column
+              // grid cannot make 44px wide on a 390px screen. Its height is the
+              // dimension that is ours to set, and the one this checks.
+              heightOnly: el.classList.contains('rgrid__sort'),
+            };
+          })
+          .filter((t) => t.h < 44 || (!t.heightOnly && t.w < 44));
+      });
+      expect(small, `targets under 44px: ${JSON.stringify(small)}`).toEqual([]);
+    } finally {
+      page = desktop;
+      await touch.close();
+    }
+  });
+
+  it('Activity has zero violations with rows and with the purge dialog open', async () => {
+    // A real operation, made the only way helparr makes one: through the
+    // confirmation. A hand-written row would scan a surface no operator sees.
+    await openSearch();
+    await runSearch();
+    await openGrabDialog();
+    await page.click('.modal__foot button:not(.btn-ghost)');
+    await expect.poll(() => page.locator('.toast').count(), { timeout: 15_000 }).toBeGreaterThan(0);
+
+    await page.goto(`${ORIGIN}/operations`);
+    await page.waitForSelector('.oplog__row');
+    await scan('Activity (populated)');
+
+    await page.click('.oplog-purge');
+    await page.waitForSelector('[role="dialog"]');
+    await scan('Activity (purge confirmation)');
+    await page.keyboard.press('Escape');
+  });
+
+  it('states every Activity outcome in words, not only in colour', async () => {
+    await page.goto(`${ORIGIN}/operations`);
+    await page.waitForSelector('.oplog__row');
+
+    const rows = await page.locator('.oplog__row').evaluateAll((items) => items.map((item) => ({
+      word: item.querySelector('.oplog__outcome')?.textContent ?? '',
+      dotLabel: item.querySelector('.dot')?.getAttribute('aria-label') ?? '',
+    })));
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      // The word is the channel; the dot repeats it for anyone reading the
+      // colour, and says the same thing to a screen reader.
+      expect(['Succeeded', 'Rejected', 'Failed']).toContain(row.word);
+      expect(row.dotLabel).toBe(row.word);
+    }
   });
 });

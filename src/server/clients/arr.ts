@@ -1,41 +1,30 @@
 import 'server-only';
 
-import type { InstanceKind, RemovalRequest, StatusMessage } from '@/lib/types';
+import type { InstanceKind, ParsedTarget, RemovalRequest, StatusMessage } from '@/lib/types';
 import type { Credential } from '@/server/instances/credential';
+import { BaseArrClient } from './base';
 import { classifyResponse, readJson, requestWithRetry } from './http';
 import {
-  DEFAULT_TIMEOUT_MS,
   describeNetworkError,
-  normalizeBaseUrl,
   type ArrQueueClient,
   type ArrQueueRead,
   type ArrQueueRecord,
-  type ClientConfig,
   type ClientResult,
-  type InstanceClient,
-  type ProbeResult,
+  type PushOutcome,
+  type ReleaseCandidate,
+  type ReleaseClient,
+  type ReleaseDescriptor,
 } from './types';
 
+export { arrApiBase } from './base';
+
 /**
- * Stateless client for Sonarr, Radarr and Prowlarr (REQ-INST-004, REQ-INST-011).
+ * Stateless client for Sonarr and Radarr (REQ-INST-004, REQ-INST-011) — the
+ * queue surface plus the three endpoints a manual grab needs.
  *
- * All three take the same `X-Api-Key` header, but not the same API version:
- * Sonarr and Radarr are on `/api/v3`, Prowlarr on `/api/v1`. Assuming v3
- * everywhere is the mistake that makes a correctly-configured Prowlarr report
- * "unreachable" — the host answers, the path 404s.
+ * Prowlarr shares the credential and the probe but none of this, so it lives in
+ * `./prowlarr` on top of the same `BaseArrClient`.
  */
-
-const API_BASE: Record<Exclude<InstanceKind, 'download-client'>, string> = {
-  sonarr: '/api/v3',
-  radarr: '/api/v3',
-  prowlarr: '/api/v1',
-};
-
-export function arrApiBase(kind: InstanceKind): string {
-  const base = API_BASE[kind as Exclude<InstanceKind, 'download-client'>];
-  if (!base) throw new Error(`${kind} is not an *arr instance`);
-  return base;
-}
 
 /**
  * Forced rather than left to the upstream default (REQ-QUEUE-001). Sonarr's
@@ -55,118 +44,21 @@ const QUEUE_PAGE_SIZE = 200;
 const QUEUE_MAX_PAGES = 25;
 const QUEUE_DEADLINE_MS = 20_000;
 
-export class ArrClient implements InstanceClient, ArrQueueClient {
-  readonly kind: InstanceKind;
+/**
+ * `GET /release?seriesId=N` is a live interactive search across every indexer
+ * the instance has configured — the upstream's own UI warns it "can take a
+ * minute". The default 8s budget would turn every evaluation into a timeout.
+ */
+const EVALUATE_DEADLINE_MS = 120_000;
 
-  readonly baseUrl: string;
-
-  private readonly apiKey: string;
-
-  private readonly timeoutMs: number;
-
-  constructor(config: ClientConfig) {
-    if (config.credential.type !== 'api-key') {
-      throw new Error(`${config.kind} requires an api-key credential`);
-    }
-    this.kind = config.kind;
-    this.baseUrl = normalizeBaseUrl(config.baseUrl);
-    this.apiKey = config.credential.apiKey;
-    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  }
-
-  private url(path: string): string {
-    return `${this.baseUrl}${arrApiBase(this.kind)}${path}`;
-  }
-
-  async probe(signal?: AbortSignal): Promise<ProbeResult> {
-    // `/system/status` is the cheap liveness endpoint and the one that also
-    // proves the credential. `/health` is deliberately not used here: it only
-    // reads the upstream's own cached task results, so polling it fast buys
-    // nothing, and Sonarr's SystemTimeCheck can throw when the host is
-    // offline and abort the whole run.
-    const started = Date.now();
-    const timeout = AbortSignal.timeout(this.timeoutMs);
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-
-    let response: Response;
-    try {
-      response = await fetch(this.url('/system/status'), {
-        headers: {
-          'X-Api-Key': this.apiKey,
-          Accept: 'application/json',
-        },
-        signal: combined,
-        cache: 'no-store',
-      });
-    } catch (error) {
-      return { state: 'unreachable', reason: describeNetworkError(error) };
-    }
-
-    const latencyMs = Date.now() - started;
-
-    if (response.status === 401 || response.status === 403) {
-      return {
-        state: 'unauthorized',
-        reason: 'The API key was rejected. Regenerate it in the upstream app and paste the new value.',
-      };
-    }
-
-    if (response.status === 404) {
-      return {
-        state: 'degraded',
-        reason: `The host answered but ${arrApiBase(this.kind)}/system/status does not exist. `
-          + 'Check the base URL — a URL base or reverse-proxy prefix is a common cause.',
-      };
-    }
-
-    if (!response.ok) {
-      return {
-        state: 'degraded',
-        reason: `Upstream returned HTTP ${response.status}.`,
-      };
-    }
-
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      // An HTML login page served with 200 is the classic signature of a
-      // reverse proxy that intercepted the request. Reporting "ok" here would
-      // let a broken configuration pass the test-before-save gate.
-      return {
-        state: 'degraded',
-        reason: 'The host answered but the response was not JSON — something is intercepting the request.',
-      };
-    }
-
-    const version = (body as { version?: unknown } | null)?.version;
-    if (typeof version !== 'string') {
-      return {
-        state: 'degraded',
-        reason: 'The response did not carry a version field — this does not look like an *arr API.',
-      };
-    }
-
-    return { state: 'ok', version, latencyMs };
-  }
-
-  /** Every request in this client carries the same auth and JSON headers. */
-  private requestInit(signal: AbortSignal, method = 'GET'): RequestInit {
-    return {
-      method,
-      headers: { 'X-Api-Key': this.apiKey, Accept: 'application/json' },
-      signal,
-    };
-  }
-
+export class ArrClient extends BaseArrClient implements ArrQueueClient, ReleaseClient {
   /**
    * One shared deadline for the whole paginated read, combined with the
    * caller's. Per-page timeouts alone would let a queue with twelve pages take
    * twelve times the budget an operator is willing to wait.
    */
   private deadline(external?: AbortSignal): AbortSignal {
-    const own = AbortSignal.timeout(QUEUE_DEADLINE_MS);
-    return external ? AbortSignal.any([external, own]) : own;
+    return this.withTimeout(external, QUEUE_DEADLINE_MS);
   }
 
   private queryFor(page: number): string {
@@ -306,6 +198,158 @@ export class ArrClient implements InstanceClient, ArrQueueClient {
     await response.body?.cancel().catch(() => {});
     return { ok: true, value: null };
   }
+
+  /* ── Manual grab ───────────────────────────────────────────────────────── */
+
+  /**
+   * Ask the instance what it would make of a release *name* (ADR-3).
+   *
+   * `/release/push` takes a title, not a target — the instance decides what the
+   * release is by parsing the name. A confirmation that echoed the operator's
+   * click would therefore be naming nothing, and REQ-OPS-007 requires it to
+   * name the resolved target.
+   *
+   * Measured read-only: a GET, no indexer traffic, nothing written.
+   */
+  async parse(title: string, signal?: AbortSignal): Promise<ClientResult<ParsedTarget>> {
+    const context = `${this.kind} parse`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url('/parse', { title }),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    return { ok: true, value: toParsedTarget(body.value, this.kind) };
+  }
+
+  /**
+   * The instance's own interactive search for a target it already tracks, read
+   * only for its `rejections` arrays (ADR-5, proposal OQ-4).
+   *
+   * This is expensive — a live query across every indexer the instance has
+   * configured, which the upstream itself warns "can take a minute". It is
+   * never called on render, on scroll, or on a timer; only when the operator
+   * explicitly asks for one release.
+   */
+  async evaluate(
+    target: { seriesId?: number | null; movieId?: number | null },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ReleaseCandidate[]>> {
+    const context = `${this.kind} evaluate`;
+    const params = this.kind === 'sonarr'
+      ? { seriesId: target.seriesId ?? undefined }
+      : { movieId: target.movieId ?? undefined };
+
+    if (params.seriesId === undefined && params.movieId === undefined) {
+      return {
+        ok: false,
+        error: {
+          kind: 'upstream-error',
+          reason: `${context} needs a resolved target — the release did not parse to anything ${this.kind} tracks.`,
+        },
+      };
+    }
+
+    const combined = this.withTimeout(signal, EVALUATE_DEADLINE_MS);
+    const response = await requestWithRetry(
+      this.url('/release', params),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: {
+          kind: 'upstream-error',
+          reason: `${context} did not return a release array.`,
+        },
+      };
+    }
+
+    return { ok: true, value: body.value.map(toReleaseCandidate) };
+  }
+
+  /**
+   * Hand a release to the instance (ADR-2). The only call in this client that
+   * mutates anything upstream.
+   *
+   * `POST /api/v3/release` is deliberately never called: it resolves
+   * `guid` + `indexerId` against the target's *own* indexer cache, and a
+   * Prowlarr `indexerId` is valid on both sides while naming a different
+   * indexer — measured, 0 of 10 ids refer to the same indexer across the two.
+   *
+   * No retry. A push is not idempotent from the operator's point of view: if
+   * it landed and the response was lost, a retry grabs the release twice.
+   */
+  async pushRelease(
+    release: ReleaseDescriptor,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<PushOutcome>> {
+    const context = `${this.kind} grab`;
+    const combined = this.withTimeout(signal);
+
+    let response: Response;
+    try {
+      response = await fetch(this.url('/release/push'), {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': this.apiKey,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: release.title,
+          downloadUrl: release.downloadUrl,
+          protocol: release.protocol,
+          publishDate: release.publishDate,
+        }),
+        signal: combined,
+        cache: 'no-store',
+      });
+    } catch (error) {
+      return { ok: false, error: { kind: 'unreachable', reason: describeNetworkError(error) } };
+    }
+
+    if (!response.ok) {
+      return { ok: false, error: classifyResponse(response, context) };
+    }
+
+    const body = await readJson(response, context);
+    if (!body.ok) return body;
+
+    // Sonarr answers with the pushed release; some versions wrap it in an
+    // array. Both carry the same `rejected` / `rejections` pair.
+    const raw = (Array.isArray(body.value) ? body.value[0] : body.value) as
+      { rejected?: unknown; rejections?: unknown } | null;
+
+    const rejections = Array.isArray(raw?.rejections)
+      ? raw.rejections.map(rejectionText).filter((entry) => entry.length > 0)
+      : [];
+
+    // `rejected` is authoritative. A populated `rejections` array with
+    // `rejected: false` happens on informational reasons, and reporting that as
+    // a refusal would be the inverse of FR9's mistake.
+    const accepted = raw?.rejected !== true;
+
+    return { ok: true, value: { accepted, rejections } };
+  }
 }
 
 /* ── Queue record parsing ─────────────────────────────────────────────────── */
@@ -396,6 +440,67 @@ export function toQueueRecord(input: unknown, kind: InstanceKind): ArrQueueRecor
     errorMessage: asStringOrNull(raw.errorMessage),
     downloadId: asStringOrNull(raw.downloadId),
     estimatedCompletionTime: asStringOrNull(raw.estimatedCompletionTime),
+  };
+}
+
+/* ── Grab payload parsing ─────────────────────────────────────────────────── */
+
+/** `quality.quality.name` — the only nesting the *arr APIs agree on. */
+function qualityName(info: Record<string, unknown> | null): string | null {
+  const quality = info?.quality as { quality?: { name?: unknown } } | undefined;
+  return asStringOrNull(quality?.quality?.name);
+}
+
+export function toParsedTarget(input: unknown, kind: InstanceKind): ParsedTarget {
+  const raw = (input ?? {}) as Record<string, unknown>;
+
+  if (kind === 'radarr') {
+    const movie = raw.movie as Record<string, unknown> | null | undefined;
+    const info = (raw.parsedMovieInfo ?? null) as Record<string, unknown> | null;
+    const movieId = typeof movie?.id === 'number' ? movie.id : null;
+    return {
+      resolved: movieId !== null,
+      seriesId: null,
+      movieId,
+      label: movie ? movieLabel({ movie }) : null,
+      quality: qualityName(info),
+      releaseGroup: asStringOrNull(info?.releaseGroup),
+    };
+  }
+
+  const series = raw.series as Record<string, unknown> | null | undefined;
+  const info = (raw.parsedEpisodeInfo ?? null) as Record<string, unknown> | null;
+  const seriesId = typeof series?.id === 'number' ? series.id : null;
+  return {
+    resolved: seriesId !== null,
+    seriesId,
+    movieId: null,
+    label: series ? episodeLabel({ series, episodes: raw.episodes }) : null,
+    quality: qualityName(info),
+    releaseGroup: asStringOrNull(info?.releaseGroup),
+  };
+}
+
+/**
+ * The *arr APIs are inconsistent about rejection shape: older builds return
+ * plain strings, newer ones `{ reason, type }`. Both are rendered verbatim
+ * (REQ-SEARCH-006), so the only job here is to find the string.
+ */
+function rejectionText(entry: unknown): string {
+  if (typeof entry === 'string') return entry;
+  const source = entry as { reason?: unknown } | null;
+  return asString(source?.reason);
+}
+
+export function toReleaseCandidate(input: unknown): ReleaseCandidate {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  return {
+    title: asString(raw.title),
+    infoHash: asStringOrNull(raw.infoHash),
+    guid: asStringOrNull(raw.guid),
+    rejections: Array.isArray(raw.rejections)
+      ? raw.rejections.map(rejectionText).filter((entry) => entry.length > 0)
+      : [],
   };
 }
 

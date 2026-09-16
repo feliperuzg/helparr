@@ -230,3 +230,169 @@ export interface RemovalOutcome {
   /** Present only on `failed`. */
   reason: string | null;
 }
+
+/* ── Indexer search and manual grab (indexer-search-grab) ─────────────────── */
+
+export interface IndexerRead {
+  id: number;
+  name: string;
+  protocol: 'torrent' | 'usenet';
+  enabled: boolean;
+  /**
+   * False when Prowlarr has backed off from the indexer after consecutive
+   * failures. Drives the degraded chip state — a chip that looks selectable but
+   * silently returns nothing is worse than one that says why.
+   */
+  healthy: boolean;
+}
+
+export interface SearchCriteria {
+  query: string;
+  /** Empty means all indexers (ADR-1). */
+  indexerIds: number[];
+  categories: number[];
+  /** Applied client-side, after the merge — it filters nothing upstream. */
+  minSeeders: number;
+}
+
+export interface ReleaseRead {
+  guid: string;
+  title: string;
+  indexerId: number;
+  indexer: string;
+  protocol: 'torrent' | 'usenet';
+  size: number;
+  /** Null rather than zero — a usenet release has no seeders at all. */
+  seeders: number | null;
+  leechers: number | null;
+  ageHours: number;
+  publishDate: string;
+  infoHash: string | null;
+  /** Derived from Prowlarr's `indexerFlags`; there is no `freeleech` field. */
+  freeleech: boolean;
+  /**
+   * The one field that carries a credential. Prowlarr proxies downloads through
+   * itself, so this embeds Prowlarr's own API key — the credential to the whole
+   * application, not a tracker passkey. It is registered as a secret on receipt
+   * and hashed before it reaches the operation log (NFR2, ADR-7).
+   *
+   * Empty when the result carried no usable link; the grab path refuses it
+   * explicitly rather than the row being silently dropped from the results.
+   */
+  downloadUrl: string;
+}
+
+export interface IndexerError {
+  indexerId: number;
+  indexer: string;
+  reason: string;
+}
+
+/**
+ * helparr's own ceiling on a merged result set (ADR-8, NFR6).
+ *
+ * Shared rather than server-private because the truncation notice has to state
+ * the real number. A UI that says "the first 500" while the server cut at 300
+ * is a disclosure that is itself wrong, which is worse than none.
+ */
+export const SEARCH_RESULT_CAP = 300;
+
+export interface SearchRead {
+  results: ReleaseRead[];
+  /** Partial failure travels in the body, not the status code (ADR-9). */
+  errors: IndexerError[];
+  indexersQueried: number;
+  indexersAnswered: number;
+  /** True when helparr's own ceiling cut the merged set (ADR-8, NFR6). */
+  truncated: boolean;
+}
+
+/** Prowlarr itself is unreachable — reported as a 200 describing the outage. */
+export interface SearchAvailability {
+  available: boolean;
+  instanceId: string | null;
+  instanceLabel: string | null;
+  baseUrl: string | null;
+  reason: string | null;
+  lastSeen: string | null;
+  indexers: IndexerRead[];
+}
+
+/**
+ * What `POST /api/search` returns — always HTTP 200 (ADR-9).
+ *
+ * `available` is the discriminant because the two bodies answer different
+ * questions: one carries results (possibly partial, with `errors` naming the
+ * indexers that went quiet), the other says Prowlarr itself could not be asked.
+ * A 5xx for the second would collapse it into the transport errors the client
+ * retries blindly, and the operator would never read the reason.
+ */
+export type SearchResponse =
+  | ({ available: true } & SearchRead)
+  | ({ available: false } & SearchAvailability);
+
+/** What the destination instance made of a release *name* (ADR-3). */
+export interface ParsedTarget {
+  resolved: boolean;
+  seriesId: number | null;
+  movieId: number | null;
+  label: string | null;
+  quality: string | null;
+  releaseGroup: string | null;
+}
+
+export interface EvaluatedRelease {
+  /**
+   * False when the instance's own search never returned this release. That is
+   * an answer, not an error — and often the one the operator came for.
+   */
+  matched: boolean;
+  rejections: string[];
+}
+
+export interface GrabOutcome {
+  status: 'succeeded' | 'failed';
+  /** True when the instance declined cleanly, as opposed to the call breaking. */
+  rejected: boolean;
+  rejections: string[];
+  detail: string | null;
+  operationId: string;
+  /** What the confirmation named, carried through to the toast. */
+  entityRef: string | null;
+}
+
+export const OPERATION_OUTCOMES = ['succeeded', 'failed'] as const;
+export type OperationOutcome = (typeof OPERATION_OUTCOMES)[number];
+
+/** The viewer's buckets. `rejected` is a split of `failed`, not a third outcome. */
+export const OPERATION_FILTERS = ['all', 'succeeded', 'rejected', 'failed'] as const;
+export type OperationFilter = (typeof OPERATION_FILTERS)[number];
+
+export interface OperationRead {
+  id: string;
+  at: string;
+  kind: string;
+  summary: string;
+  instanceLabel: string;
+  instanceKind: string;
+  entityTitle: string;
+  entityRef: string | null;
+  indexer: string | null;
+  /**
+   * The download URL, redacted (ADR-7). There is no plaintext-URL column to
+   * read — the prefix exists so two rows for the same release can be
+   * recognised as such. It is not a link.
+   */
+  urlSha256: string | null;
+  urlHost: string | null;
+  outcome: OperationOutcome;
+  rejected: boolean;
+  /** Rejection reasons verbatim, or the single transport error. */
+  detail: string[];
+}
+
+export interface OperationsRead {
+  operations: OperationRead[];
+  counts: Record<OperationFilter, number>;
+  oldestAt: string | null;
+}

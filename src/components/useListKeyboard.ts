@@ -3,11 +3,16 @@
 import { useCallback, useEffect, useState, type RefObject } from 'react';
 
 /**
- * The keyboard layer (REQ-QUEUE-012, T14).
+ * The shared keyboard layer for every list screen (REQ-QUEUE-012,
+ * REQ-SEARCH-010 / FR13).
  *
  * Bound to the window rather than to the grid, because `/` has to work from
  * anywhere on the screen and `j`/`k` have to work before the operator has ever
  * clicked a row. That is exactly what makes the typing guard load-bearing.
+ *
+ * Queue and Search differ in exactly one respect — Queue multi-selects, Search
+ * does not — so selection is optional rather than duplicated. A second copy of
+ * this hook would be a second place for the typing guard to drift.
  */
 
 /**
@@ -27,20 +32,21 @@ function isTyping(): boolean {
     || el.isContentEditable;
 }
 
-export interface QueueKeyboardOptions {
+export interface ListKeyboardOptions {
   count: number;
-  onToggleSelect: (index: number) => void;
+  /** Omitted on screens without multi-select — Search is one (no bulk bar). */
+  onToggleSelect?: (index: number) => void;
   onOpen: (index: number) => void;
   /** Returns true if it consumed the Escape — the inspector closing takes
    *  precedence over clearing the selection, so one press does one thing. */
   onEscape: () => boolean;
-  onClearSelection: () => void;
+  onClearSelection?: () => void;
   searchRef: RefObject<HTMLInputElement | null>;
   /** Suppressed while a modal owns the keyboard. */
   enabled?: boolean;
 }
 
-export function useQueueKeyboard({
+export function useListKeyboard({
   count,
   onToggleSelect,
   onOpen,
@@ -48,7 +54,7 @@ export function useQueueKeyboard({
   onClearSelection,
   searchRef,
   enabled = true,
-}: QueueKeyboardOptions) {
+}: ListKeyboardOptions) {
   const [cursor, setCursor] = useState(0);
 
   // Clamp when the list shrinks underneath the cursor — a refresh that drops
@@ -83,7 +89,7 @@ export function useQueueKeyboard({
         }
         event.preventDefault();
         if (onEscape()) return;
-        onClearSelection();
+        onClearSelection?.();
         return;
       }
 
@@ -122,7 +128,10 @@ export function useQueueKeyboard({
           move(-10);
           return;
         case ' ':
-          if (count === 0) return;
+          // Not preventDefault-ed when the screen has no selection: Space must
+          // stay available to scroll the results, which is what it does on a
+          // long list with nothing to select.
+          if (count === 0 || !onToggleSelect) return;
           event.preventDefault();
           setCursor((i) => { onToggleSelect(i); return i; });
           return;
@@ -142,7 +151,7 @@ export function useQueueKeyboard({
   return { cursor: clamped, setCursor };
 }
 
-/** Selection, keyed by `QueueRecord.id` so it survives a refetch (REQ-QUEUE-015). */
+/** Selection, keyed by row id so it survives a refetch (REQ-QUEUE-015). */
 export function useSelection() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
 

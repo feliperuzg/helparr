@@ -77,6 +77,51 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    name: 'operation-log',
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE operation (
+          id             TEXT PRIMARY KEY,
+          at             TEXT NOT NULL,                 -- ISO 8601 UTC
+          kind           TEXT NOT NULL,                 -- 'grab' today; 'attach', 'rename' later
+          summary        TEXT NOT NULL,                 -- operator-readable, names the resolved target
+
+          -- Denormalised on purpose. Deleting an instance in Settings must not
+          -- rewrite what helparr did while it existed, so there is no foreign
+          -- key here: ON DELETE CASCADE would let a Settings deletion silently
+          -- erase history, which is exactly what NFR3 forbids.
+          instance_id    TEXT,
+          instance_label TEXT NOT NULL,
+          instance_kind  TEXT NOT NULL,
+
+          entity_title   TEXT NOT NULL,                 -- the release name as the indexer published it
+          entity_ref     TEXT,                          -- what the *arr resolved, or NULL
+          indexer        TEXT,                          -- originating indexer, by name
+
+          -- NEVER the URL itself (REQ-OPS-004, ADR-7). The URL embeds
+          -- Prowlarr's own API key, which is the credential to the whole
+          -- application. There is no column to write it to.
+          url_sha256     TEXT,
+          url_host       TEXT,
+
+          -- Two values, not three. REQ-OPS-001 requires a rejected grab to be
+          -- recorded with outcome "failed" verbatim; the rejected flag splits "your
+          -- quality profile said no" from "radarr returned 502" for the
+          -- viewer's filter without contradicting the spec.
+          outcome        TEXT NOT NULL CHECK (outcome IN ('succeeded','failed')),
+          rejected       INTEGER NOT NULL DEFAULT 0,
+          detail         TEXT                           -- JSON: rejection reasons, or the transport error
+        );
+
+        -- No updated_at and no status column: a row is written once, from the
+        -- response, and never revisited (ADR-6).
+        CREATE INDEX idx_operation_at      ON operation (at DESC);
+        CREATE INDEX idx_operation_outcome ON operation (outcome, at DESC);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database): number {
