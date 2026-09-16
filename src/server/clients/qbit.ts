@@ -24,7 +24,9 @@ import {
  *     login from `200 OK` with `Ok.` to `204 No Content` with an empty body,
  *     while older versions return `200` with `Fails.` on *failure*. Any
  *     body-based check is wrong on some version. Success is a 2xx status plus
- *     a `SID` in `Set-Cookie`.
+ *     a session cookie in `Set-Cookie` — whose *name* is also version-dependent
+ *     (`SID` pre-5.1, `QBT_SID_<port>` after), so the whole `name=value` pair is
+ *     kept and replayed rather than the value under an assumed name.
  *  2. Always send `Referer`. qBittorrent rejects requests whose `Referer` or
  *     `Origin` does not match `Host` with a 403 that looks exactly like an auth
  *     failure — the "works in curl, fails from the app" classic.
@@ -35,9 +37,10 @@ import {
  */
 
 /**
- * In-memory, per process, keyed by instance id. Never persisted: a SID in the
- * database would be a credential in a backup with none of the lifetime
- * guarantees of the password it came from. A restart costs one extra login.
+ * In-memory, per process, keyed by instance id. Holds the whole `name=value`
+ * cookie pair. Never persisted: a live session in the database would be a
+ * credential in a backup with none of the lifetime guarantees of the password it
+ * came from. A restart costs one extra login.
  */
 const sessions = new Map<string, string>();
 
@@ -88,12 +91,12 @@ export class QbitClient implements InstanceClient, TorrentClient {
   }
 
   /**
-   * Returns the SID on success, or a failure result the caller can surface
-   * directly. Rule 1 lives here.
+   * Returns the session cookie pair on success, or a failure result the caller
+   * can surface directly. Rule 1 lives here.
    */
   private async login(
     signal?: AbortSignal,
-  ): Promise<{ sid: string } | Extract<ProbeResult, { state: 'unauthorized' | 'unreachable' | 'degraded' }>> {
+  ): Promise<{ cookie: string } | Extract<ProbeResult, { state: 'unauthorized' | 'unreachable' | 'degraded' }>> {
     const body = new URLSearchParams({
       username: this.username,
       password: this.password,
@@ -124,34 +127,34 @@ export class QbitClient implements InstanceClient, TorrentClient {
       };
     }
 
-    const sid = extractSid(response.headers);
+    const cookie = extractSessionCookie(response.headers);
 
-    // Rule 1: 2xx AND a SID. Not the body, on any version.
-    if (!response.ok || !sid) {
+    // Rule 1: 2xx AND a session cookie. Not the body, on any version.
+    if (!response.ok || !cookie) {
       return {
         state: 'unauthorized',
         reason: 'qBittorrent rejected the username or password.',
       };
     }
 
-    sessions.set(this.instanceId, sid);
-    return { sid };
+    sessions.set(this.instanceId, cookie);
+    return { cookie };
   }
 
   async probe(signal?: AbortSignal): Promise<ProbeResult> {
     const started = Date.now();
 
-    let sid = sessions.get(this.instanceId);
-    if (!sid) {
+    let session = sessions.get(this.instanceId);
+    if (!session) {
       const result = await this.login(signal);
       if ('state' in result) return result;
-      sid = result.sid;
+      session = result.cookie;
     }
 
     const attempt = async (cookie: string): Promise<Response | ProbeResult> => {
       try {
         return await fetch(`${this.baseUrl}/api/v2/app/version`, {
-          headers: this.headers({ Cookie: `SID=${cookie}`, Accept: 'text/plain' }),
+          headers: this.headers({ Cookie: cookie, Accept: 'text/plain' }),
           signal: this.signal(signal),
           cache: 'no-store',
         });
@@ -160,7 +163,7 @@ export class QbitClient implements InstanceClient, TorrentClient {
       }
     };
 
-    let response = await attempt(sid);
+    let response = await attempt(session);
     if (!(response instanceof Response)) return response;
 
     // Rule 3 — exactly one re-login, never a loop.
@@ -168,7 +171,7 @@ export class QbitClient implements InstanceClient, TorrentClient {
       sessions.delete(this.instanceId);
       const relogin = await this.login(signal);
       if ('state' in relogin) return relogin;
-      response = await attempt(relogin.sid);
+      response = await attempt(relogin.cookie);
       if (!(response instanceof Response)) return response;
       if (response.status === 401 || response.status === 403) {
         return {
@@ -197,23 +200,23 @@ export class QbitClient implements InstanceClient, TorrentClient {
    * SID is resolved once for whichever call hits it first.
    */
   private async authorized(path: string, signal: AbortSignal): Promise<ClientResult<Response>> {
-    let sid = sessions.get(this.instanceId);
-    if (!sid) {
+    let session = sessions.get(this.instanceId);
+    if (!session) {
       const result = await this.login(signal);
       if ('state' in result) return { ok: false, error: toClientFailure(result) };
-      sid = result.sid;
+      session = result.cookie;
     }
 
     const send = (cookie: string) => requestWithRetry(
       `${this.baseUrl}${path}`,
       {
-        headers: this.headers({ Cookie: `SID=${cookie}`, Accept: 'application/json' }),
+        headers: this.headers({ Cookie: cookie, Accept: 'application/json' }),
         signal,
       },
       signal,
     );
 
-    let response = await send(sid);
+    let response = await send(session);
     if (!response.ok) return response;
 
     if (response.value.status === 401 || response.value.status === 403) {
@@ -221,7 +224,7 @@ export class QbitClient implements InstanceClient, TorrentClient {
       sessions.delete(this.instanceId);
       const relogin = await this.login(signal);
       if ('state' in relogin) return { ok: false, error: toClientFailure(relogin) };
-      response = await send(relogin.sid);
+      response = await send(relogin.cookie);
       if (!response.ok) return response;
     }
 
@@ -302,7 +305,20 @@ export function toTorrentState(input: unknown): TorrentState {
  * Exported for the unit tests, which assert SID detection across every
  * documented response shape rather than the happy path alone.
  */
-export function extractSid(headers: Headers): string | null {
+/**
+ * Returns the session cookie as a whole `name=value` pair, ready to be replayed
+ * verbatim in a `Cookie` header — not just its value.
+ *
+ * qBittorrent 5.1 renamed the cookie from `SID` to `QBT_SID_<port>` so that two
+ * instances behind one host stop clobbering each other's session. Matching only
+ * `SID=` therefore fails to log in at all against any current server, and
+ * matching the value while replaying it under a hardcoded name would earn a 403.
+ * Carrying the pair is immune to both, and to whatever the name becomes next.
+ *
+ * Verified against qBittorrent v5.2.3 / WebAPI 2.15.1, which issues
+ * `QBT_SID_8080=…; HttpOnly; SameSite=Lax; path=/`.
+ */
+export function extractSessionCookie(headers: Headers): string | null {
   // `getSetCookie` preserves multiple Set-Cookie headers; a plain `get` would
   // fold them into one comma-joined string and break on cookies containing
   // an Expires date.
@@ -311,8 +327,20 @@ export function extractSid(headers: Headers): string | null {
     : [headers.get('set-cookie')].filter((v): v is string => v !== null);
 
   for (const cookie of cookies) {
-    const match = /(?:^|;\s*)SID=([^;]+)/.exec(cookie);
-    if (match && match[1]) return match[1];
+    // The session cookie is the first attribute of the header; everything after
+    // the first `;` is metadata (HttpOnly, SameSite, expires, path).
+    const pair = cookie.split(';', 1)[0]?.trim();
+    if (!pair) continue;
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+
+    const name = pair.slice(0, separator);
+    const value = pair.slice(separator + 1);
+    if (!value) continue;
+
+    // `SID` is pre-5.1; `QBT_SID_<port>` is current. Anything else in the jar
+    // is not a session and must not be mistaken for one.
+    if (name === 'SID' || /^QBT_SID_\d+$/.test(name)) return pair;
   }
   return null;
 }

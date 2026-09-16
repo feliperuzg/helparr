@@ -60,8 +60,10 @@ async function qbitTorrents(baseUrl, username, password) {
   const base = new URL(baseUrl);
 
   // qBittorrent 403s any request whose Referer does not match Host, and a
-  // successful login is a 2xx plus a SID cookie — never the body, which changed
-  // shape in 5.2.0. Both rules are the same ones QbitClient follows.
+  // successful login is a 2xx plus a session cookie — never the body, which
+  // changed shape in 5.2.0. The cookie's name changed too (`SID` pre-5.1,
+  // `QBT_SID_<port>` after), so the whole pair is replayed verbatim. All three
+  // rules are the same ones QbitClient follows.
   const login = await fetch(new URL('/api/v2/auth/login', base), {
     method: 'POST',
     headers: {
@@ -73,13 +75,13 @@ async function qbitTorrents(baseUrl, username, password) {
   });
   if (!login.ok) throw new Error(`qBittorrent login returned HTTP ${login.status}`);
 
-  const sid = (login.headers.getSetCookie?.() ?? [])
-    .map((c) => /(?:^|;\s*)SID=([^;]+)/.exec(c)?.[1])
-    .find(Boolean);
-  if (!sid) throw new Error('qBittorrent login succeeded but returned no SID cookie');
+  const session = (login.headers.getSetCookie?.() ?? [])
+    .map((c) => c.split(';', 1)[0]?.trim())
+    .find((pair) => pair && /^(SID|QBT_SID_\d+)=.+/.test(pair));
+  if (!session) throw new Error('qBittorrent login succeeded but returned no session cookie');
 
   const response = await fetch(new URL('/api/v2/torrents/info', base), {
-    headers: { Cookie: `SID=${sid}`, Referer: base.origin },
+    headers: { Cookie: session, Referer: base.origin },
   });
   if (!response.ok) throw new Error(`qBittorrent torrents/info returned HTTP ${response.status}`);
 
