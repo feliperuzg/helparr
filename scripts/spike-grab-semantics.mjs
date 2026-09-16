@@ -71,13 +71,25 @@ function describeUrl(raw) {
 
 async function get(label, baseUrl, apiKey, path, params = {}, timeoutMs = 120_000) {
   const url = new URL(path, baseUrl);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+  for (const [k, v] of Object.entries(params)) {
+    // ASP.NET Core binds `List<int>` from a REPEATED parameter, not a CSV —
+    // Prowlarr answers `indexerIds=1,2,3` with a validation error. Arrays here
+    // become `k=1&k=2&k=3` so the difference is testable rather than assumed.
+    if (Array.isArray(v)) for (const item of v) url.searchParams.append(k, String(item));
+    else url.searchParams.set(k, String(v));
+  }
 
   const response = await fetch(url, {
     headers: { 'X-Api-Key': apiKey },
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok) throw new Error(`${label} ${path} returned HTTP ${response.status}`);
+  if (!response.ok) {
+    // The *arr APIs put the actual validation complaint in the body; a bare
+    // status code turns a fixable typo into a guessing game. Error bodies carry
+    // no credentials — the request key is never echoed back.
+    const detail = await response.text().catch(() => '');
+    throw new Error(`${label} ${path} returned HTTP ${response.status}${detail ? ` — ${clip(detail, 300)}` : ''}`);
+  }
   return response.json();
 }
 
@@ -146,10 +158,34 @@ async function main() {
 
   // ── OQ-2/OQ-3, part 2: what does a Prowlarr search result actually carry? ─
   section(`Prowlarr aggregate search — query "${query}" (OQ-2)`);
-  const prowlarrResults = await get(
-    'Prowlarr', prowlarrUrl, prowlarrKey, '/api/v1/search',
-    { query, indexerIds: -1, type: 'search', limit: 50 },
-  );
+
+  // Prowlarr has tightened this endpoint's parameter validation across major
+  // versions, and it answers a rejected shape with a bare 400. Which shape it
+  // accepts is itself a finding worth recording, so try them narrowest-first
+  // and report which one worked rather than dying on the first refusal.
+  const searchShapes = [
+    { label: 'query + indexerIds=-1 + type + limit', params: { query, indexerIds: -1, type: 'search', limit: 50 } },
+    { label: 'query + indexerIds=-1 + type', params: { query, indexerIds: -1, type: 'search' } },
+    { label: 'query + indexerIds=-1', params: { query, indexerIds: -1 } },
+    { label: 'query + indexerIds CSV', params: { query, indexerIds: [...prowlarrById.keys()].join(',') } },
+    { label: 'query + indexerIds repeated', params: { query, indexerIds: [...prowlarrById.keys()] } },
+    { label: 'query only', params: { query } },
+  ];
+
+  let prowlarrResults = [];
+  let acceptedShape = null;
+  for (const shape of searchShapes) {
+    try {
+      prowlarrResults = await get('Prowlarr', prowlarrUrl, prowlarrKey, '/api/v1/search', shape.params);
+      acceptedShape = shape.label;
+      break;
+    } catch (error) {
+      console.log(`  ✗ ${shape.label} — ${error.message.replace(/^Prowlarr \/api\/v1\/search returned /, '')}`);
+    }
+  }
+
+  findings.prowlarrSearchShape = acceptedShape;
+  if (acceptedShape) console.log(`  ✓ accepted: ${acceptedShape}`);
   console.log(`results: ${prowlarrResults.length}`);
   findings.prowlarrResultCount = prowlarrResults.length;
 
@@ -172,11 +208,102 @@ async function main() {
     findings.prowlarrResultCarriesRejections = Object.hasOwn(sample, 'rejections');
     findings.prowlarrGuidSample = String(sample.guid);
     findings.passkeyParams = dl?.looksLikePasskey ?? [];
+  } else if (!acceptedShape) {
+    console.log('  (every parameter shape was refused — OQ-2 falls back to the');
+    console.log('   indexer-identity and rejection findings, which stand alone)');
   } else {
     console.log('  (no results — try SPIKE_QUERY with a broader term)');
   }
 
+  // ── AC2: can a search be scoped to one indexer, and does scoping hold? ───
+  // The proposal's second acceptance criterion is "restricting to a single
+  // indexer returns results only from that indexer". That is only implementable
+  // if the endpoint accepts a scope at all, so pin the working parameter shape
+  // here rather than discovering it during apply.
+  if (prowlarrResults.length > 0) {
+    section('Single-indexer scoping (AC2)');
+
+    const perIndexer = new Map();
+    for (const r of prowlarrResults) perIndexer.set(r.indexerId, (perIndexer.get(r.indexerId) ?? 0) + 1);
+    const [busiestId] = [...perIndexer.entries()].sort((a, b) => b[1] - a[1])[0];
+    console.log(`scoping to indexer ${busiestId} (${prowlarrById.get(busiestId) ?? '?'}), which returned ${perIndexer.get(busiestId)} of ${prowlarrResults.length} unscoped`);
+
+    try {
+      const scoped = await get('Prowlarr', prowlarrUrl, prowlarrKey, '/api/v1/search', { query, indexerIds: [busiestId] });
+      const foreign = scoped.filter((r) => r.indexerId !== busiestId);
+      console.log(`scoped results: ${scoped.length}`);
+      console.log(`from other indexers: ${foreign.length}`);
+      console.log(foreign.length === 0
+        ? '  ✓ scoping holds — AC2 is implementable with a repeated indexerIds param'
+        : '  ✗ scoping LEAKED — AC2 would need client-side filtering as well');
+      findings.scopingWorks = foreign.length === 0;
+      findings.scopedCount = scoped.length;
+    } catch (error) {
+      console.log(`  ✗ scoped search refused — ${error.message}`);
+      findings.scopingWorks = false;
+    }
+
+    // Volume matters: an unbounded aggregate search across 10 indexers is a lot
+    // of rows to ship to a browser. Find out whether the endpoint can bound it.
+    try {
+      const limited = await get('Prowlarr', prowlarrUrl, prowlarrKey, '/api/v1/search', { query, limit: 25 });
+      console.log(`\nlimit=25 → ${limited.length} results ${limited.length <= 25 ? '(honoured)' : '(IGNORED — cap client-side)'}`);
+      findings.limitHonoured = limited.length <= 25;
+    } catch (error) {
+      console.log(`\nlimit refused — ${error.message}`);
+      findings.limitHonoured = false;
+    }
+  }
+
+  // ── REQ-OPS-007: can the confirmation name the RESOLVED target? ───────────
+  // `/release/push` takes a title, not a target — Sonarr decides what the
+  // release is by parsing the name. So a confirmation that merely echoes the
+  // operator's click would be naming nothing. `GET /api/v3/parse` asks the
+  // target *arr the same question ahead of time, and it is a GET: no write, no
+  // indexer traffic. If it resolves, the confirmation can say "this will land
+  // on <series> <SxxEyy>" truthfully.
+  if (prowlarrResults.length > 0) {
+    section('Pre-resolving the grab target (REQ-OPS-007)');
+
+    // Two titles: a real Prowlarr result (the realistic case) and one Sonarr
+    // certainly does not track, to see what an unresolvable parse looks like —
+    // that branch is the dangerous one, because a push Sonarr cannot place is
+    // accepted and then silently never imports.
+    const probes = [
+      { label: 'a live Prowlarr result', title: String(prowlarrResults[0].title) },
+      { label: 'a release for nothing tracked', title: 'Definitely Not A Real Show S01E01 1080p WEB-DL x264-NOGROUP' },
+    ];
+
+    for (const probe of probes) {
+      try {
+        const parsed = await get('Sonarr', sonarrUrl, sonarrKey, '/api/v3/parse', { title: probe.title }, 30_000);
+        const series = parsed?.series?.title ?? null;
+        const episodes = Array.isArray(parsed?.episodes) ? parsed.episodes.length : 0;
+        const info = parsed?.parsedEpisodeInfo ?? parsed?.parsedMovieInfo ?? null;
+        console.log(`  ${probe.label}:`);
+        console.log(`    title parsed as:   ${clip(info?.seriesTitle ?? info?.movieTitle ?? '(nothing)', 44)}`);
+        console.log(`    quality:           ${info?.quality?.quality?.name ?? '(none)'}`);
+        console.log(`    resolved series:   ${series ? clip(series, 40) : 'NOT IN LIBRARY'}`);
+        console.log(`    resolved episodes: ${episodes}`);
+        findings.parseWorks = true;
+      } catch (error) {
+        console.log(`  ✗ ${probe.label} — ${error.message}`);
+        findings.parseWorks = false;
+      }
+    }
+
+    console.log('');
+    console.log(findings.parseWorks
+      ? '  → the confirmation can name a resolved target before any write'
+      : '  → no pre-resolution available; the confirm names the instance only');
+  }
+
   // ── OQ-4: are rejections available WITHOUT grabbing? ──────────────────────
+  if (env('SPIKE_SKIP_SONARR')) {
+    section('Sonarr interactive search — SKIPPED (SPIKE_SKIP_SONARR set)');
+    process.exit(0);
+  }
+
   // Sonarr's interactive search is a GET. If its results already carry a
   // populated `rejections` array, the decision engine can be consulted without
   // any write at all — which is the whole question.
