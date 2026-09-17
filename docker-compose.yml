@@ -1,0 +1,111 @@
+# helparr beside an existing *arr stack (FR8, REQ-DEPLOY-008/009, AC11).
+#
+# Copy this next to the compose file that already runs Sonarr, Radarr and
+# Prowlarr, fill in the two secrets, and `docker compose up -d`. Nothing else
+# needs editing — which is the point: an example that requires five unexplained
+# edits before it starts is a worked example of nothing.
+#
+# There are no literal secrets in this file and there never may be. A compose
+# file gets committed, pasted into forum posts and read by `docker inspect`;
+# the placeholders below are deliberately non-functional so that starting
+# helparr without replacing them fails at startup with a message naming the
+# variable, rather than silently coming up with a guessable key.
+
+services:
+  helparr:
+    image: helparr:local
+    # Or build it here instead of pulling:
+    #   build:
+    #     context: .
+    #     args:
+    #       # Only if helparr is served under a subpath. It is compiled into
+    #       # the build and cannot be changed afterwards — startup refuses a
+    #       # mismatch rather than serving an app whose assets all 404.
+    #       HELPARR_BASE_PATH: /helparr
+    container_name: helparr
+    restart: unless-stopped
+
+    ports:
+      # Publish on the LAN, or drop this and put helparr on the same network as
+      # your reverse proxy. helparr terminates no TLS itself.
+      - "3000:3000"
+
+    environment:
+      # ---- Required ------------------------------------------------------
+      # Encrypts instance credentials at rest. Generate one, keep it, and back
+      # it up: it is not recoverable, and without it the database cannot be
+      # read. `openssl rand -base64 32`
+      #
+      # CHANGE-ME is not a key. helparr will refuse to start until it is
+      # replaced — the variable is read from the shell or a .env file beside
+      # this compose file, never written here.
+      HELPARR_ENCRYPTION_KEY: ${HELPARR_ENCRYPTION_KEY:?set HELPARR_ENCRYPTION_KEY in a .env file beside this compose file}
+
+      # ---- First run only ------------------------------------------------
+      # Sets the operator password the first time helparr starts. Ignored once
+      # a password exists, so leaving it here cannot silently reset a password
+      # you later changed in the UI. Minimum 8 characters.
+      HELPARR_INITIAL_PASSWORD: ${HELPARR_INITIAL_PASSWORD:?set HELPARR_INITIAL_PASSWORD in a .env file beside this compose file}
+
+      # ---- Optional ------------------------------------------------------
+      # debug | info | warn | error. Credentials are redacted at every level.
+      HELPARR_LOG_LEVEL: info
+      # How often the queue screen re-reads your instances. Minimum 5.
+      HELPARR_QUEUE_REFRESH_SECONDS: "30"
+
+    volumes:
+      # The database and its -wal/-shm sidecars must share one mount, so the
+      # directory is mounted rather than the .db file. Mounting the file alone
+      # is the classic way to corrupt a WAL database on restart.
+      - helparr-data:/data
+
+    # Reaches the unauthenticated liveness route, which reports only that the
+    # process is up and the database opens. A Sonarr outage does not make
+    # helparr unhealthy — the route has no opinion about your instances.
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.mjs"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    # Add helparr to whatever network your *arr containers already share, and
+    # then use their service names as base URLs in Settings — e.g.
+    # http://sonarr:8989. If they are on the host network instead, use the
+    # host's LAN address; helparr does not care which, it just needs to reach
+    # them.
+    networks:
+      - arr
+
+volumes:
+  helparr-data:
+
+networks:
+  arr:
+    # Already defined by your *arr stack — point this at it instead of letting
+    # compose create a second, isolated one.
+    external: true
+    name: arr
+
+# ---------------------------------------------------------------------------
+# Variant: the key from a file instead of the environment (Docker secrets)
+#
+# HELPARR_ENCRYPTION_KEY_FILE is an indirection to the same key, not a second
+# key. Set exactly one of the two — helparr refuses both at once rather than
+# picking a winner, because a silent winner between two secrets is how you
+# encrypt against a key you did not think you were using.
+#
+#   services:
+#     helparr:
+#       environment:
+#         HELPARR_ENCRYPTION_KEY_FILE: /run/secrets/helparr_encryption_key
+#         # and no HELPARR_ENCRYPTION_KEY at all
+#       secrets:
+#         - helparr_encryption_key
+#
+#   secrets:
+#     helparr_encryption_key:
+#       file: ./secrets/helparr_encryption_key   # not committed; chmod 600
+#
+# A trailing newline in the file is expected and stripped — `printf '%s' ...`
+# and `openssl rand -base64 32 > file` both work.

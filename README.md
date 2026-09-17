@@ -123,10 +123,17 @@ required.
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `HELPARR_ENCRYPTION_KEY` | **yes** | — | Encrypts the SQLite database at rest, including every stored API key. Minimum 16 characters. helparr refuses to start without it rather than silently writing credentials in the clear. |
-| `HELPARR_INITIAL_PASSWORD` | first run | — | Bootstraps the operator password. Read once, hashed with argon2id, then ignored — it is not a standing source of truth. |
-| `HELPARR_DB_PATH` | no | `./data/helparr.db` | Where the encrypted database lives. Point this at your mounted volume. |
+| `HELPARR_ENCRYPTION_KEY_FILE` | — | — | The same key, read from a file instead — the shape Docker secrets and systemd `LoadCredential` produce. Set exactly one of the two; both at once is refused rather than resolved by precedence. One trailing newline is stripped. |
+| `HELPARR_INITIAL_PASSWORD` | first run | — | Bootstraps the operator password. Read once, hashed with argon2id, then ignored — it is not a standing source of truth. Minimum 8 characters. |
+| `HELPARR_DB_PATH` | no | `./data/helparr.db` | Where the encrypted database lives. Point this at your mounted volume — the *directory*, so the `-wal` and `-shm` sidecars stay beside the file. |
 | `HELPARR_BASE_PATH` | no | *(none)* | Serve under a sub-path (e.g. `/helparr`) behind a reverse proxy. Baked at build time, not runtime. |
 | `HELPARR_LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error`. Secrets are redacted at every level. |
+| `HELPARR_QUEUE_REFRESH_SECONDS` | no | `30` | How often the queue screen re-reads your instances. Minimum 5 — a lower value is refused, not silently replaced. |
+
+Every one of these is read and validated **once, at startup**. A value helparr
+cannot use stops the process with a message naming the variable, what was
+expected, and what was actually there — all of them at once, so a misconfigured
+deployment takes one restart to fix rather than one per mistake.
 
 > **Losing `HELPARR_ENCRYPTION_KEY` means losing the database.** There is no
 > recovery path — the stored *arr credentials become unreadable and you will
@@ -166,18 +173,24 @@ your first instance under **Settings**.
 ## Deploy
 
 Both targets come from the same `output: 'standalone'` build — there is no
-separate server bundle to maintain.
+separate server bundle to maintain. One command produces both:
+
+```bash
+npm run package     # the standalone bundle on this host, and the helparr:local image
+```
+
+It is a wrapper, not a third build: `npm run build:standalone` on its own gives
+you the bare-metal artifact, and `npm run build:image` on its own gives you the
+container.
 
 ### Bare metal / systemd
 
 ```bash
 npm ci
-npm run build:standalone          # next build + copies .next/static into the bundle
+npm run build:standalone   # next build + merges .next/static and public/ into the bundle
 
-# Ship these three to the host:
-#   .next/standalone/   (the self-contained server)
-#   .next/static/       (already copied in by the script above)
-#   public/
+# Ship one directory to the host:
+#   .next/standalone/   (the self-contained server, static assets already inside)
 ```
 
 Then run it as a service:
@@ -199,14 +212,36 @@ WantedBy=multi-user.target
 
 ### Docker
 
-An official image and `Dockerfile` are part of the not-yet-implemented
-packaging-and-hardening
-change. Until it lands, build the standalone bundle above and run it in whatever
-Node base image you already trust, with:
+```bash
+npm run build:image                       # → helparr:local
 
-- the database path on a **mounted volume** (`HELPARR_DB_PATH`),
-- `HELPARR_ENCRYPTION_KEY` supplied as a **secret**, not baked into the image,
-- the container on the same network as your *arr stack.
+docker run -d --name helparr \
+  -p 3000:3000 \
+  -v helparr-data:/data \
+  -e HELPARR_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -e HELPARR_INITIAL_PASSWORD='replace-me' \
+  helparr:local
+```
+
+[`docker-compose.yml`](docker-compose.yml) is a worked example for dropping
+helparr beside an existing *arr stack. It contains no secrets and is not meant
+to: the two required values come from a `.env` file beside it, and compose
+refuses to start without them rather than falling back to a default.
+
+The image is a multi-stage build on `node:22-slim`. It runs as a non-root user,
+declares `/data` as a volume, ships no application source and no second
+`node_modules` tree, and its `HEALTHCHECK` calls an unauthenticated liveness
+route — so a Sonarr outage never restarts helparr, and no session cookie has to
+be baked into an image layer.
+
+Every one of those claims is checked, against a real container, by:
+
+```bash
+npm run verify:image
+```
+
+It builds nothing and touches nothing of yours — a throwaway container and
+volume, removed on exit.
 
 ### Behind a reverse proxy
 

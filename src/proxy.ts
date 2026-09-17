@@ -25,8 +25,20 @@ import { NextResponse, type NextRequest } from 'next/server';
 const SESSION_COOKIE = 'helparr_session';
 const PUBLIC_PATHS = ['/login'];
 
+/**
+ * Exact match, and listed apart from `PUBLIC_PATHS` for that reason: those are
+ * prefixes, and a `/api/health` prefix would make the session-guarded
+ * per-instance endpoint public along with the liveness one. The container
+ * healthcheck needs exactly this path and nothing below it (OQ-4).
+ */
+const LIVENESS_PATH = '/api/health/live';
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (pathname === LIVENESS_PATH) {
+    return NextResponse.next();
+  }
 
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
     return NextResponse.next();

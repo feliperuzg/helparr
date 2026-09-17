@@ -1,0 +1,45 @@
+# The build context is the input to `next build`, not a copy of the working
+# tree. Everything excluded here is either regenerated inside the builder stage,
+# host-specific and wrong inside Linux, or a secret that must never reach an
+# image layer (NFR3 / REQ-DEPLOY-009).
+
+.git
+.gitignore
+
+# Host-built native bindings. `npm ci` runs inside the Linux builder stage
+# precisely so the compiled .node binaries match the glibc and architecture the
+# runner ships — copying a macOS or musl tree in would defeat that (OQ-2, OQ-5).
+node_modules
+.next
+
+# Never: the encryption key and the operator password live here.
+.env
+.env.local
+.env*.local
+
+# The operator's own database, its WAL sidecars, and anything else under the
+# volume mount point. The image declares /data; it must never carry one.
+data
+*.db
+*.db-shm
+*.db-wal
+
+# Issue tracker, agent state and the requirements workflow — none of it is
+# input to a build.
+.beads
+.dolt
+.claude
+.mcp.json
+arx
+AGENTS.md
+CLAUDE.md
+
+# Test lanes run in CI against the working tree, not inside the image.
+test
+vitest.config.ts
+
+# Operator scripts, including the two that talk to a live *arr stack. The
+# healthcheck under docker/ is copied explicitly by the runner stage.
+scripts
+
+tsconfig.tsbuildinfo

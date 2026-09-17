@@ -15,8 +15,11 @@
     "test:bundle": "next build && HELPARR_BUNDLE_TEST=1 vitest run test/bundle-leak.test.ts",
     "test:a11y": "npm run build:standalone && HELPARR_A11Y_TEST=1 vitest run test/a11y.test.ts",
     "test:e2e": "npm run build:standalone && HELPARR_E2E_TEST=1 vitest run test/queue-removal.test.ts test/queue-perf.test.ts test/queue-interaction.test.ts test/search-grab.test.ts test/search-interaction.test.ts test/search-perf.test.ts test/gaps-interaction.test.ts test/gaps-perf.test.ts test/rename-interaction.test.ts test/rename-perf.test.ts",
-    "build:standalone": "next build && cp -R .next/static .next/standalone/.next/static",
+    "build:standalone": "next build && cp -R .next/static .next/standalone/.next/static && mkdir -p .next/standalone/public && cp -R public/. .next/standalone/public/",
+    "build:image": "docker build -t helparr:local .",
+    "package": "npm run build:standalone && npm run build:image",
     "verify:downloadid": "node scripts/verify-download-id.mjs",
+    "verify:image": "node scripts/verify-image.mjs",
     "spike:grab": "node scripts/spike-grab-semantics.mjs",
     "spike:gaps": "node scripts/spike-gaps-attach.mjs",
     "spike:rename": "node scripts/spike-rename-preview.mjs"
