@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState, type RefObject } from 'react';
 
+import { isDialogOpen } from './ui';
+
 /**
  * The shared keyboard layer for every list screen (REQ-QUEUE-012,
  * REQ-SEARCH-010 / FR13).
@@ -78,6 +80,12 @@ export function useListKeyboard({
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (!enabled) return;
+      // A dialog owns the keyboard until it closes (REQ-A11Y-002). Each screen
+      // also passes its own `enabled`, but that is per-screen bookkeeping and
+      // the rule is not: asserting it here is what makes the shortcut
+      // reference's last line true on every screen at once, including ones
+      // added later.
+      if (isDialogOpen()) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       // Escape is the one key that still fires while typing — it is how the

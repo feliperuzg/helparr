@@ -3,10 +3,11 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import Icon, { type IconName } from './Icon';
-import { StatusDot } from './ui';
+import ShortcutsDialog from './ShortcutsDialog';
+import { isDialogOpen, StatusDot } from './ui';
 import { api } from '@/lib/api';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/status';
 
@@ -82,7 +83,33 @@ export default function AppShell({ children }: { children: ReactNode }) {
     setNavOpen(false);
   }
 
-  // Digit shortcuts for screen switching — ignored while typing.
+  const [shortcuts, setShortcuts] = useState(false);
+
+  /**
+   * Move focus into the new screen on client-side navigation (FR15 /
+   * REQ-A11Y-004, T21).
+   *
+   * The App Router does not do this — a client-side route change swaps the DOM
+   * and leaves focus exactly where it was, which for a keyboard user means
+   * still sitting on the nav link they just used, and for a screen reader means
+   * nothing is announced at all. Neither user is told the screen changed.
+   *
+   * Skipped on the first render: a full page load already starts focus at the
+   * document, and pulling it into `main` there would skip the operator past the
+   * skip link and the nav before they have had a chance to reach either.
+   */
+  const focusedRoute = useRef(pathname);
+  useEffect(() => {
+    if (focusedRoute.current === pathname) return;
+    focusedRoute.current = pathname;
+    // `main` carries tabIndex={-1} on every screen, so it is focusable as a
+    // target without becoming a tab stop of its own.
+    document.getElementById('main')?.focus();
+  }, [pathname]);
+
+  // Digit shortcuts for screen switching, and `?` for the reference — both
+  // ignored while typing, and both suppressed while a dialog is up, which is
+  // the same rule `useListKeyboard` applies to the list bindings.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const el = document.activeElement as HTMLElement | null;
@@ -90,6 +117,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
         el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
       );
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isDialogOpen()) return;
+      if (e.key === '?') { e.preventDefault(); setShortcuts(true); return; }
       const hit = NAV.find((n) => n.key === e.key);
       if (hit) { e.preventDefault(); router.push(hit.to); }
     }
@@ -139,6 +168,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <span className="topbar__crumb">{current?.label ?? 'helparr'}</span>
         <span className="topbar__spacer" />
         <HealthBadge degraded={degraded} known={health.data !== undefined} total={instances.length} />
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => setShortcuts(true)}
+          aria-label="Keyboard shortcuts (?)"
+        >
+          <Icon name="keyboard" size={14} />
+        </button>
         <LogoutButton />
       </header>
 
@@ -199,6 +236,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </nav>
 
       {children}
+
+      {shortcuts ? <ShortcutsDialog onClose={() => setShortcuts(false)} /> : null}
     </div>
   );
 }

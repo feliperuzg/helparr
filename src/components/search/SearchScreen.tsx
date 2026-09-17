@@ -51,10 +51,11 @@ import type {
  */
 
 const HINTS: Array<[string[], string]> = [
-  [['/'], 'focus search'],
+  [['/'], 'filter'],
   [['j', 'k'], 'move'],
   [['enter'], 'inspect'],
   [['esc'], 'close'],
+  [['?'], 'all shortcuts'],
 ];
 
 export default function SearchScreen({ initialQuery = '' }: { initialQuery?: string } = {}) {

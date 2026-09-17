@@ -42,10 +42,12 @@ import type { RenamePlanPhase, RenameScopeEntry, RenameTitleOption } from '@/lib
  */
 
 const HINTS: Array<[string[], string]> = [
+  [['/'], 'filter'],
   [['j', 'k'], 'move'],
   [['space'], 'include / exclude'],
   [['enter'], 'inspect'],
   [['esc'], 'close'],
+  [['?'], 'all shortcuts'],
 ];
 
 /** Which phases put a list of rows on the screen for the keyboard to drive. */

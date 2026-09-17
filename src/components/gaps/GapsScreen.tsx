@@ -51,6 +51,7 @@ const HINTS: Array<[string[], string]> = [
   [['space'], 'select'],
   [['enter'], 'inspect'],
   [['esc'], 'close'],
+  [['?'], 'all shortcuts'],
 ];
 
 type Scope = 'all' | 'sonarr' | 'radarr';

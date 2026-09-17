@@ -30,11 +30,12 @@ import type { QueueRecord, RemovalRequest } from '@/lib/types';
  */
 
 const HINTS: Array<[string[], string]> = [
+  [['/'], 'filter'],
   [['j', 'k'], 'move'],
   [['space'], 'select'],
   [['enter'], 'inspect'],
-  [['/'], 'search'],
   [['esc'], 'close'],
+  [['?'], 'all shortcuts'],
 ];
 
 export interface QueueScreenProps {

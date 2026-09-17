@@ -1553,6 +1553,31 @@ select.input {
 .modal__body { padding: var(--space-4); overflow-y: auto; font-size: 13px; }
 .modal__foot { display: flex; gap: var(--space-2); justify-content: flex-end; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border-subtle); }
 
+/* The keyboard shortcut reference. Two columns rather than a table: the keys
+   are the thing being looked up, so they get the fixed edge to scan down. */
+.shortcuts { display: flex; flex-direction: column; gap: var(--space-4); }
+.shortcuts__heading {
+  font-family: var(--font-heading); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-text-subtle);
+  margin-bottom: var(--space-2);
+}
+.shortcuts__list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; }
+.shortcuts__row { display: flex; align-items: baseline; gap: var(--space-3); min-height: 22px; }
+.shortcuts__keys {
+  display: flex; align-items: center; gap: 3px;
+  flex: none; width: 96px;
+}
+.shortcuts__desc { margin: 0; font-size: 12px; color: var(--color-foreground); min-width: 0; }
+.shortcuts__note { font-size: 11px; max-width: 52ch; }
+
+@media (max-width: 639px) {
+  /* The keys move above their description rather than squeezing a 96px gutter
+     out of a narrow sheet. Same Modal, no new layout. */
+  .shortcuts__row { flex-direction: column; gap: 2px; }
+  .shortcuts__keys { width: auto; }
+}
+
 .callout {
   display: flex; gap: var(--space-3);
   padding: var(--space-3);

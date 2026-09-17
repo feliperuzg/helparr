@@ -306,6 +306,22 @@ const FOCUSABLE = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+/**
+ * How many dialogs are currently up.
+ *
+ * `aria-modal="true"` claims nothing behind the dialog exists. Tab honours that
+ * because the trap below makes it, but the app's other window-level key
+ * handlers — the list cursor, the shell's digit shortcuts — would otherwise
+ * keep firing underneath, and the claim would be false for exactly the keys
+ * that change state. Read through `isDialogOpen()` rather than a context so a
+ * plain `keydown` handler can consult it without re-rendering on every open.
+ */
+let openDialogs = 0;
+
+export function isDialogOpen(): boolean {
+  return openDialogs > 0;
+}
+
 export function Modal({
   title,
   onClose,
@@ -322,6 +338,7 @@ export function Modal({
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    openDialogs += 1;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     ref.current?.focus();
     function onKey(e: KeyboardEvent) {
@@ -361,6 +378,7 @@ export function Modal({
     }
     window.addEventListener('keydown', onKey, true);
     return () => {
+      openDialogs -= 1;
       window.removeEventListener('keydown', onKey, true);
       previouslyFocused?.focus?.();
     };

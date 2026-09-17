@@ -41,6 +41,7 @@ export default defineConfig({
           '**/search-perf.test.ts',
           '**/saved-search-interaction.test.ts',
           '**/first-run.test.ts',
+          '**/reduced-motion.test.ts',
           '**/gaps-interaction.test.ts',
           '**/gaps-perf.test.ts',
           '**/rename-interaction.test.ts',

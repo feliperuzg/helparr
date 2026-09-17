@@ -40,6 +40,16 @@ import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fa
  * NFR6 is actually about and axe cannot check — that a before/after diff is
  * never carried by colour alone.
  *
+ * T19 of packaging-and-hardening / AC16, FR13 closes the loop over the surfaces
+ * that change added — the guided first run that stands in for five screens, the
+ * saved-search band with a scope that no longer resolves, and the shortcut
+ * reference — and holds the whole accumulated set at zero. (Its task number
+ * collides with the rename one above; the change ids are what distinguish
+ * them.) Plus the properties a rule engine cannot reach: that a takeover still
+ * says which screen it replaced, that the nudge names the missing kind in words
+ * rather than counting it, and that the reference's own closing line — a dialog
+ * owns the keyboard until it closes — is true.
+ *
  * This drives the real standalone build in a real browser rather than rendering
  * components under jsdom. NFR7's requirements are mostly *rendered* properties
  * — visible `:focus-visible` rings from `--color-ring`, contrast ratios from the
@@ -241,6 +251,17 @@ async function runSearch(query = 'show') {
     .toBeGreaterThan(0);
 }
 
+/** One saved search's chip in the band below the toolbar. */
+const savedChip = (name: string) => page.locator(`.saved .filter-chip:has-text("${name}")`);
+
+/** Saves whatever the toolbar currently holds, under `name`. */
+async function saveSearch(name: string) {
+  await page.click('.saved__actions button:has-text("Save this search")');
+  await page.fill('#saved-search-name', name);
+  await page.click('.modal button.btn-primary');
+  await expect.poll(() => savedChip(name).count()).toBe(1);
+}
+
 /** Library Gaps, loaded, with the whole read on screen. */
 async function openGaps() {
   await page.goto(`${ORIGIN}/gaps`);
@@ -402,9 +423,49 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     expect(visible, `focused input had no visible ring: ${JSON.stringify(ring)}`).toBe(true);
   });
 
-  it('Settings has zero violations, empty and populated', async () => {
-    await login(page, ORIGIN, PASSWORD);
+  /* ---------------------------------------------------------------------
+     T19 — the guided first run.
 
+     Placed here on purpose: every scan below this point registers an instance,
+     and from the first one onwards this screen can never be reached again in
+     this suite. It is also where the session starts, so the login that the
+     Settings scans used to open with lives here now.
+     --------------------------------------------------------------------- */
+
+  it('The guided first run has zero violations on the screen it takes over', async () => {
+    await login(page, ORIGIN, PASSWORD);
+    await page.waitForSelector('.firstrun');
+    await scan('First run (Overview)');
+
+    // A second screen, because the takeover is per-route: Gaps renders the same
+    // body from its own page, and a landmark or heading that is right on one
+    // and duplicated on the other is exactly what this would catch.
+    await page.goto(`${ORIGIN}/gaps`);
+    await page.waitForSelector('.firstrun');
+    await scan('First run (Gaps)');
+  });
+
+  it('keeps one h1 on the takeover and still says which screen it replaced', async () => {
+    // Neither is a WCAG AA rule — `page-has-heading-one` is best-practice, and
+    // nothing in axe checks that a screen announces its own identity. Both
+    // matter more here than anywhere else: this is one body standing in for
+    // five different routes, and the only thing that distinguishes them.
+    expect(await page.locator('main h1').allTextContents()).toEqual(['Welcome to helparr']);
+    expect(await page.locator('main .sr-only').allTextContents()).toEqual(['Gaps']);
+  });
+
+  it('The first-run call to action lands on an add form with zero violations', async () => {
+    await page.click('.firstrun a.btn-primary');
+    await page.waitForURL(`${ORIGIN}/settings?add=1`);
+    await page.waitForSelector('#new-url');
+    // Not the same surface as the add form scanned further down: there are no
+    // instance cards above it yet, so the form is the entire page and its
+    // labelling has no surrounding structure to lean on.
+    await scan('Settings (first-run add form)');
+  });
+
+  it('Settings has zero violations, empty and populated', async () => {
+    // The session was opened by the first-run scans above.
     await page.goto(`${ORIGIN}/settings`);
     await page.waitForSelector('text=No instances configured');
     await scan('Settings (empty)');
@@ -453,6 +514,24 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     await page.waitForSelector('[role="dialog"]');
     await scan('Overview (removal preview)');
     await page.click('.modal__foot .btn-ghost');
+  });
+
+  it('Overview has zero violations with the setup nudge, which names what is missing', async () => {
+    // Sonarr and Radarr are registered; Prowlarr is not seeded until the search
+    // scans below. That window is the only place in this suite where the nudge
+    // is on screen at all, which is why this sits here rather than beside the
+    // first-run scans.
+    await openOverview();
+    await page.waitForSelector('.firstrun__nudge');
+    await scan('Overview (setup nudge)');
+
+    // The part axe cannot check, and the part REQ-DEPLOY-013 is about: it says
+    // which kind is missing, in words. "Setup is incomplete (2 of 3)" leaves
+    // the operator to work out which of three things it meant.
+    const copy = await page.textContent('.firstrun__nudge-copy');
+    expect(copy).toContain('Prowlarr');
+    expect(copy).not.toContain('Sonarr');
+    expect(copy).not.toContain('Radarr');
   });
 
   it('exposes the grid body as exactly one tab stop', async () => {
@@ -733,6 +812,89 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
       page = desktop;
       await touch.close();
     }
+  });
+
+  /* ---------------------------------------------------------------------
+     T19 — saved searches: the band, the name prompt, both tones of the
+     unresolved-scope note, and the delete confirmation.
+     --------------------------------------------------------------------- */
+
+  it('Saved searches have zero violations empty, and in the name prompt', async () => {
+    await openSearch();
+    await page.waitForSelector('.saved__empty');
+    await scan('Saved searches (none yet)');
+
+    // The prompt cannot be opened at all until the toolbar holds a query, so
+    // the scope is set here too — it is what the later scans are about.
+    await page.fill('#search-query', 'show');
+    await page.click('.stoolbar .filter-chip:has-text("TorrentDay")');
+    await page.click('.stoolbar .filter-chip:has-text("Nyaa")');
+
+    await page.click('.saved__actions button:has-text("Save this search")');
+    await page.waitForSelector('#saved-search-name');
+    await scan('Saved searches (name prompt)');
+
+    await page.fill('#saved-search-name', 'Both indexers');
+    await page.click('.modal button.btn-primary');
+    await expect.poll(() => savedChip('Both indexers').count()).toBe(1);
+  });
+
+  it('Saved searches have zero violations with a populated band', async () => {
+    await openSearch();
+    await page.fill('#search-query', 'anime');
+    await page.click('.stoolbar .filter-chip:has-text("Nyaa")');
+    await saveSearch('Nyaa alone');
+    await scan('Saved searches (populated, one selected)');
+
+    // Same component as the scope chips, same contract — but checked again
+    // here, because a saved chip is the one whose selection has to survive the
+    // screen being reopened, and that is where a state carried only by a class
+    // name quietly stops being announced.
+    expect(await savedChip('Nyaa alone').getAttribute('aria-pressed')).toBe('true');
+    expect(await savedChip('Both indexers').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('Saved searches have zero violations when a saved scope no longer resolves', async () => {
+    // Nyaa leaves Prowlarr between the save and the next visit. This is the
+    // whole reason a scope is stored as names rather than as ids (ADR-6), and
+    // the note it produces is a surface that only exists when something has
+    // gone wrong upstream — the kind that otherwise escapes review entirely.
+    prowlarr.setIndexers([INDEXERS[0]]);
+    await openSearch();
+
+    await savedChip('Both indexers').click();
+    await page.waitForSelector('.saved .callout');
+    await scan('Saved searches (scope partly missing)');
+    // Warn, because the search will still run — and the indexer is named, not
+    // counted. "1 indexer is gone" only tells the operator to go and find out
+    // which one.
+    expect(await page.textContent('.saved .callout'))
+      .toContain('Nyaa is no longer in Prowlarr. This search will run without it.');
+
+    await savedChip('Nyaa alone').click();
+    await expect.poll(() => page.textContent('.saved .callout'))
+      .toContain('scoped to nothing else');
+    await scan('Saved searches (scope entirely missing)');
+
+    // The tone is a colour; the sentence is what survives without it. An error
+    // note that only differed from the warn one by being red would tell a
+    // colour-blind operator nothing about why Search is about to refuse.
+    expect(await page.textContent('.saved .callout')).not.toContain('will run without');
+  });
+
+  it('Saved searches have zero violations in the delete confirmation', async () => {
+    await page.click('.saved__actions button:has-text("Delete")');
+    await page.waitForSelector('[role="dialog"]');
+    await scan('Saved searches (delete confirmation)');
+
+    // Named on the button, not only in the sentence (REQ-SEARCH-015): a
+    // confirmation whose action reads "Delete" alone is one the operator
+    // answers about whichever row they believe is selected.
+    expect(await page.textContent('.modal__foot .btn-danger-solid')).toContain('Nyaa alone');
+    await page.click('.modal__foot .btn-ghost');
+
+    // Handed back intact — the scans below search for real results.
+    prowlarr.setIndexers(INDEXERS);
   });
 
   it('Activity has zero violations with rows and with the purge dialog open', async () => {
@@ -1106,6 +1268,66 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
       await scan('Rename (refused on drift)');
 
       sonarr.setRenamePreview(renamePreviewFor);
+    });
+  });
+
+  /* ---------------------------------------------------------------------
+     T19 — the keyboard shortcut reference. One dialog, reachable from every
+     screen, whose closing sentence is a claim about all of them.
+     --------------------------------------------------------------------- */
+
+  describe('the shortcut reference', () => {
+    it('has zero violations, opened from the topbar', async () => {
+      await openOverview();
+      await page.click('[aria-label="Keyboard shortcuts (?)"]');
+      await page.waitForSelector('.shortcuts');
+      await scan('Shortcut reference');
+      await page.keyboard.press('Escape');
+      await expect.poll(() => page.locator('.shortcuts').count()).toBe(0);
+    });
+
+    it('opens from ? anywhere except a text field', async () => {
+      await openOverview();
+      await page.keyboard.press('?');
+      await page.waitForSelector('.shortcuts');
+      await page.keyboard.press('Escape');
+      await expect.poll(() => page.locator('.shortcuts').count()).toBe(0);
+
+      // The filter field is where `?` is a character an operator meant to type,
+      // not a command — and a help dialog that eats it is a field they cannot
+      // search with.
+      await page.focus('#list-search');
+      await page.keyboard.press('?');
+      expect(await page.inputValue('#list-search')).toBe('?');
+      expect(await page.locator('.shortcuts').count()).toBe(0);
+    });
+
+    it('owns the keyboard while it is open, which is its own last line', async () => {
+      await openOverview();
+      // A cursor to move and a route to leave: the two things the reference
+      // claims are suppressed while a dialog is up.
+      await page.click('.qgrid__body-row >> nth=0');
+      await page.keyboard.press('Escape');
+      const before = await page.getAttribute('.qgrid__body-row.is-cursor', 'aria-rowindex');
+      expect(before, 'no cursor row to move').not.toBeNull();
+
+      await page.click('[aria-label="Keyboard shortcuts (?)"]');
+      await page.waitForSelector('.shortcuts');
+
+      await page.keyboard.press('j');
+      await page.keyboard.press('3');
+      await page.waitForTimeout(200);
+
+      expect(new URL(page.url()).pathname, '3 navigated out from under the dialog').toBe('/');
+      expect(await page.getAttribute('.qgrid__body-row.is-cursor', 'aria-rowindex')).toBe(before);
+
+      // And the bindings come back. The dialog took the keyboard; it did not
+      // break it — a suppression that never lifts is the worse bug of the two.
+      await page.keyboard.press('Escape');
+      await expect.poll(() => page.locator('.shortcuts').count()).toBe(0);
+      await page.keyboard.press('j');
+      await page.waitForTimeout(200);
+      expect(await page.getAttribute('.qgrid__body-row.is-cursor', 'aria-rowindex')).not.toBe(before);
     });
   });
 });
