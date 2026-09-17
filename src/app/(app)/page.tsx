@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import QueueScreen from '@/components/queue/QueueScreen';
-import { DEFAULT_REFRESH_MS } from '@/components/queue/useQueue';
+import { getConfig } from '@/server/config';
 
 export const metadata: Metadata = { title: 'Overview · helparr' };
 
@@ -11,15 +11,9 @@ export const metadata: Metadata = { title: 'Overview · helparr' };
 // a container someone else configures (ADR-2).
 export const dynamic = 'force-dynamic';
 
-function refreshMs(): number {
-  const raw = Number(process.env.HELPARR_QUEUE_REFRESH_SECONDS);
-  // A misconfigured value falls back rather than polling every 0ms. Five seconds
-  // is the floor: below that the reads cost the instance more than the freshness
-  // is worth (NFR1).
-  if (!Number.isFinite(raw) || raw < 5) return DEFAULT_REFRESH_MS;
-  return Math.round(raw) * 1_000;
-}
-
 export default function OverviewPage() {
-  return <QueueScreen refreshMs={refreshMs()} />;
+  // Validated at startup, including the five-second floor. This page used to do
+  // its own coercion and fall back silently on a bad value; now a bad value
+  // never reaches a request, because the process refuses to start with one.
+  return <QueueScreen refreshMs={getConfig().queueRefreshSeconds * 1_000} />;
 }

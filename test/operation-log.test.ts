@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import { cleanupTestDir } from './helpers/env';
 import { startFakeArr, type FakeArr } from './helpers/fakeArr';
+import { resetConfigCache } from '@/server/config';
 import { closeDb, getDb } from '@/server/db';
 import { createInstance, deleteInstance } from '@/server/instances/registry';
 import { logger } from '@/server/logging/redact';
@@ -224,6 +225,10 @@ describe('operation log integrity', () => {
   it('keeps the credential out of the log at the most verbose level', async () => {
     const previousLevel = process.env.HELPARR_LOG_LEVEL;
     process.env.HELPARR_LOG_LEVEL = 'debug';
+    // The configuration is parsed once and cached for the process lifetime, so
+    // changing the environment underneath it is only meaningful in a test, and
+    // only when the cache is dropped alongside it.
+    resetConfigCache();
 
     const lines: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => { lines.push(args.join(' ')); });
@@ -251,6 +256,7 @@ describe('operation log integrity', () => {
     } finally {
       if (previousLevel === undefined) delete process.env.HELPARR_LOG_LEVEL;
       else process.env.HELPARR_LOG_LEVEL = previousLevel;
+      resetConfigCache();
     }
   });
 });

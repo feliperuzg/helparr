@@ -2,6 +2,7 @@ import 'server-only';
 
 import argon2 from 'argon2';
 
+import { getConfig } from '@/server/config';
 import { getDb } from '@/server/db';
 import { logger } from '@/server/logging/redact';
 
@@ -49,10 +50,15 @@ export async function setOperatorPassword(plaintext: string): Promise<void> {
  * Bootstrap from `HELPARR_INITIAL_PASSWORD` on first run. Idempotent: once a
  * hash exists the environment variable is ignored, so leaving it set in a
  * compose file cannot silently reset a password the operator later changed.
+ *
+ * The length check lives in `@/server/config`, so a too-short bootstrap password
+ * is reported at startup by name rather than discovered here — at the moment
+ * someone is trying to log in for the first time, which is the worst moment to
+ * learn that the password they were handed was never stored.
  */
 export async function ensureBootstrapPassword(): Promise<void> {
   if (hasOperatorPassword()) return;
-  const initial = process.env.HELPARR_INITIAL_PASSWORD;
+  const initial = getConfig().initialPassword;
   if (!initial) return;
   await setOperatorPassword(initial);
   logger.info('bootstrapped operator password from HELPARR_INITIAL_PASSWORD');

@@ -2,10 +2,11 @@ import 'server-only';
 
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 
 import type { Database } from 'better-sqlite3-multiple-ciphers';
 
+import { getConfig } from '@/server/config';
 import { getDatabaseKey } from '@/server/crypto';
 import { logger } from '@/server/logging/redact';
 import { runMigrations } from './migrations';
@@ -20,22 +21,20 @@ import { runMigrations } from './migrations';
  * regression here fails CI rather than surfacing as a broken Docker image.
  */
 
-const DEFAULT_PATH = './data/helparr.db';
-
 let handle: Database | null = null;
 
 export function getDatabasePath(): string {
-  // `turbopackIgnore` because this is a runtime path, not a bundling concern.
-  // Turbopack (the default builder since Next 16) statically reads any
-  // `path.resolve` of a non-literal as "this module reaches into the
-  // filesystem", and conservatively traces the entire project into the
-  // standalone output — src/, test/, arx/ and all. Measured: 65 MB with the
-  // whole repo inside the deployable server bundle.
+  // Resolved by `@/server/config`, which carries the `turbopackIgnore` this
+  // line used to need: Turbopack (the default builder since Next 16)
+  // statically reads any `path.resolve` of a non-literal as "this module
+  // reaches into the filesystem", and conservatively traces the entire project
+  // into the standalone output — src/, test/, arx/ and all. Measured: 65 MB
+  // with the whole repo inside the deployable server bundle.
   //
   // The suggested alternative, scoping to `join(process.cwd(), 'data', …)`,
   // is not available to us: HELPARR_DB_PATH is an operator-supplied absolute
   // path to a mounted volume, which is the entire point of the variable.
-  return resolve(/* turbopackIgnore: true */ process.env.HELPARR_DB_PATH ?? DEFAULT_PATH);
+  return getConfig().databasePath;
 }
 
 export function getDb(): Database {

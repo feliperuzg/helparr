@@ -23,6 +23,16 @@ const nextConfig = {
   // between this and the reverse proxy is surfaced loudly at startup rather
   // than as silently-404ing assets (REQ-DEPLOY-007, packaging-and-hardening).
   basePath: process.env.HELPARR_BASE_PATH || undefined,
+
+  // The value above, frozen into the build so the running process can compare
+  // what it was compiled with against what the operator has configured now.
+  // Keys listed here are substituted literally at build time, which is exactly
+  // what makes this a record of the build rather than a second reading of the
+  // environment — `HELPARR_BASE_PATH` itself stays a live runtime read
+  // (ADR-1, REQ-DEPLOY-007).
+  env: {
+    HELPARR_COMPILED_BASE_PATH: process.env.HELPARR_BASE_PATH || '',
+  },
 };
 
 export default nextConfig;

@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { getConfig } from '@/server/config';
+
 /**
  * Credential redaction (REQ-INST-012, REQ-AUTH-007 / NFR1).
  *
@@ -101,8 +103,16 @@ type Level = 'debug' | 'info' | 'warn' | 'error';
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
 function threshold(): number {
-  const configured = (process.env.HELPARR_LOG_LEVEL ?? 'info').toLowerCase();
-  return LEVELS[configured as Level] ?? LEVELS.info;
+  try {
+    return LEVELS[getConfig().logLevel];
+  } catch {
+    // The logger must survive an unparseable configuration, because the message
+    // explaining that configuration may have to travel through it. An invalid
+    // level is reported by name at startup (REQ-DEPLOY-008); here it just falls
+    // back rather than turning a config error into a crash inside the reporting
+    // of that same config error.
+    return LEVELS.info;
+  }
 }
 
 function emit(level: Level, message: string, context?: unknown): void {
