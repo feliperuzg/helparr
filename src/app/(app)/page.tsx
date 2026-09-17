@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import FirstRun from '@/components/FirstRun';
 import QueueScreen from '@/components/queue/QueueScreen';
 import { getConfig } from '@/server/config';
 
@@ -15,5 +16,9 @@ export default function OverviewPage() {
   // Validated at startup, including the five-second floor. This page used to do
   // its own coercion and fall back silently on a bad value; now a bad value
   // never reaches a request, because the process refuses to start with one.
-  return <QueueScreen refreshMs={getConfig().queueRefreshSeconds * 1_000} />;
+  return (
+    <FirstRun title="Overview">
+      <QueueScreen refreshMs={getConfig().queueRefreshSeconds * 1_000} />
+    </FirstRun>
+  );
 }

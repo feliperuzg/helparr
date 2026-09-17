@@ -1,3 +1,4 @@
+import FirstRun from '@/components/FirstRun';
 import RenameScreen from '@/components/rename/RenameScreen';
 
 export const metadata = {
@@ -6,5 +7,9 @@ export const metadata = {
 };
 
 export default function RenamePage() {
-  return <RenameScreen />;
+  return (
+    <FirstRun title="Rename">
+      <RenameScreen />
+    </FirstRun>
+  );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import Icon from '../Icon';
 import {
@@ -16,9 +16,23 @@ import {
   type InstanceDto, type InstanceHealthDto, type InstanceKind,
 } from '@/lib/types';
 
-export default function SettingsScreen() {
+export default function SettingsScreen({ initiallyAdding = false }: { initiallyAdding?: boolean }) {
   const { toasts, push } = useToasts();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(initiallyAdding);
+  const addRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Scroll the deep-linked form into view once, on arrival from the guided
+   * first run. Only when it was opened by the URL: doing it on every open would
+   * yank the page under an operator who clicked the button they could already
+   * see.
+   *
+   * `behavior` is left to default rather than forced to 'smooth' — a scroll is
+   * motion, and DESIGN.md §7 has the reduced-motion answer everywhere else.
+   */
+  useEffect(() => {
+    if (initiallyAdding) addRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [initiallyAdding]);
 
   const instances = useQuery({ queryKey: ['instances'], queryFn: api.listInstances });
   const health = useQuery({
@@ -49,7 +63,7 @@ export default function SettingsScreen() {
             <h2 className="section__title">Connections</h2>
 
             {adding ? (
-              <div style={{ marginBottom: 'var(--space-3)' }}>
+              <div ref={addRef} style={{ marginBottom: 'var(--space-3)' }}>
                 <AddInstanceCard onDone={() => setAdding(false)} onToast={push} />
               </div>
             ) : null}

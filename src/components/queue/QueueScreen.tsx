@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { SetupNudge } from '@/components/FirstRun';
 import Icon from '@/components/Icon';
 import DegradedBanner from '@/components/queue/DegradedBanner';
 import InstanceHealthRail from '@/components/queue/InstanceHealthRail';
@@ -205,6 +206,9 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
             </button>
           )}
         />
+
+        {/* Overview only, and only while a core kind is still missing (T17). */}
+        <SetupNudge />
 
         <div className="toolbar">
           <SearchField

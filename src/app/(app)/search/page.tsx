@@ -1,3 +1,4 @@
+import FirstRun from '@/components/FirstRun';
 import SearchScreen from '@/components/search/SearchScreen';
 
 /**
@@ -12,5 +13,9 @@ export default async function SearchPage({
   searchParams: Promise<{ q?: string | string[] }>;
 }) {
   const { q } = await searchParams;
-  return <SearchScreen initialQuery={typeof q === 'string' ? q : ''} />;
+  return (
+    <FirstRun title="Indexer Search">
+      <SearchScreen initialQuery={typeof q === 'string' ? q : ''} />
+    </FirstRun>
+  );
 }
