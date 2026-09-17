@@ -122,6 +122,105 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    name: 'rename-plan',
+    up: (db) => {
+      db.exec(`
+        -- One row per "generate preview". This is the ONLY thing an apply may
+        -- read to decide what to touch (NFR1): the apply request carries a plan
+        -- id and a count and nothing else, so there is no field a caller could
+        -- use to widen the scope past what is stored here.
+        CREATE TABLE rename_plan (
+          id            TEXT PRIMARY KEY,
+          phase         TEXT NOT NULL
+                          CHECK (phase IN ('building','ready','applying','done','expired','refused')),
+
+          -- The exact [{instanceId, kind, upstreamId, label}] the operator
+          -- picked, verbatim, so a regenerate reproduces the same scope and so
+          -- the "no changes" list can be computed as scope-minus-rows rather
+          -- than stored twice.
+          scope_json    TEXT NOT NULL,
+          title_json    TEXT NOT NULL,                 -- per-title build outcome
+
+          total_titles  INTEGER NOT NULL DEFAULT 0,
+          total_files   INTEGER NOT NULL DEFAULT 0,    -- every row, exclusions included
+
+          built_at      TEXT,                          -- ISO 8601 UTC, null while building
+          -- built_at + 300s, computed once. There is no column to extend it
+          -- with, because FR11 has no "extend" (REQ-RENAME-014).
+          expires_at    TEXT,
+          applied_at    TEXT,                          -- first moment an outcome may be non-pending
+
+          -- Kept for audit only. The gate is checked server-side against the
+          -- stored rows before this is written; nothing reads it afterwards.
+          typed_confirmation TEXT,
+
+          refusal_json  TEXT,                          -- {kind, reason, drifted[]} or null
+          created_at    TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_rename_plan_expires_at ON rename_plan (expires_at);
+
+        CREATE TABLE rename_plan_row (
+          id             TEXT PRIMARY KEY,
+          plan_id        TEXT NOT NULL REFERENCES rename_plan (id) ON DELETE CASCADE,
+
+          -- Denormalised for the same reason operation's columns are: deleting
+          -- an instance in Settings must not rewrite a plan built while it
+          -- existed. Nullable id, never-null label.
+          instance_id    TEXT,
+          instance_label TEXT NOT NULL,
+          instance_kind  TEXT NOT NULL CHECK (instance_kind IN ('sonarr','radarr')),
+
+          title_kind        TEXT NOT NULL CHECK (title_kind IN ('series','movie')),
+          title_upstream_id INTEGER NOT NULL,
+          title_label       TEXT NOT NULL,
+
+          -- file_id + existing_path together are the captured precondition
+          -- (OQ-3). apply.ts re-derives both and refuses the whole plan on any
+          -- mismatch. There is deliberately no force/ignore-drift column: the
+          -- schema has nowhere to record a bypass (REQ-RENAME-013).
+          file_id        INTEGER NOT NULL,
+          existing_path  TEXT NOT NULL,
+          proposed_path  TEXT NOT NULL,
+
+          -- JSON array of codes helparr DERIVED from the diff (ADR-9). Neither
+          -- Sonarr nor Radarr returns any warning field — the spike established
+          -- that — so nothing here may ever be attributed to the instance.
+          warnings_json  TEXT NOT NULL DEFAULT '[]',
+
+          excluded       INTEGER NOT NULL DEFAULT 0,
+
+          -- 'pending' until applied_at is set. Never written optimistically:
+          -- an outcome means the file was verified, not that a command was
+          -- accepted (REQ-RENAME-015).
+          outcome        TEXT NOT NULL DEFAULT 'pending'
+                           CHECK (outcome IN ('pending','succeeded','failed','skipped')),
+          outcome_detail TEXT
+        );
+
+        CREATE INDEX idx_rename_plan_row_plan_id ON rename_plan_row (plan_id);
+
+        -- operation.detail is a flat string[] — enough for a grab's handful of
+        -- rejection reasons, not for "reconstruct which files moved from what
+        -- to what" at plan scale (REQ-OPS-001). Paths are copied in rather than
+        -- joined, so the log survives the plan being purged.
+        CREATE TABLE rename_file_outcome (
+          id            TEXT PRIMARY KEY,
+          operation_id  TEXT NOT NULL REFERENCES operation (id) ON DELETE CASCADE,
+          plan_row_id   TEXT NOT NULL,                 -- soft reference, deliberately
+          existing_path TEXT NOT NULL,
+          proposed_path TEXT NOT NULL,
+          outcome       TEXT NOT NULL CHECK (outcome IN ('succeeded','failed','skipped')),
+          detail        TEXT
+        );
+
+        CREATE INDEX idx_rename_file_outcome_operation_id
+          ON rename_file_outcome (operation_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database): number {

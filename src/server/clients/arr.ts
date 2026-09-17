@@ -6,6 +6,7 @@ import type {
   InstanceKind,
   ParsedTarget,
   RemovalRequest,
+  RenameTitleKind,
   SeasonStatistic,
   SeriesDetail,
   SeriesSummary,
@@ -18,9 +19,11 @@ import {
   describeNetworkError,
   type ArrGapRead,
   type ArrGapRecord,
+  type ArrCommandStatus,
   type ArrQueueClient,
   type ArrQueueRead,
   type ArrQueueRecord,
+  type ArrRenameRow,
   type ClientResult,
   type GapClient,
   type PushOutcome,
@@ -28,6 +31,8 @@ import {
   type ReleaseCandidate,
   type ReleaseClient,
   type ReleaseDescriptor,
+  type RenameClient,
+  type RenameCommandRequest,
   type SearchCommandRequest,
 } from './types';
 
@@ -83,7 +88,8 @@ const GAPS_DEADLINE_MS = 30_000;
  */
 const HISTORY_PAGE_SIZE = 20;
 
-export class ArrClient extends BaseArrClient implements ArrQueueClient, ReleaseClient, GapClient {
+export class ArrClient extends BaseArrClient
+  implements ArrQueueClient, ReleaseClient, GapClient, RenameClient {
   /**
    * One shared deadline for the whole paginated read, combined with the
    * caller's. Per-page timeouts alone would let a queue with twelve pages take
@@ -673,6 +679,313 @@ export class ArrClient extends BaseArrClient implements ArrQueueClient, ReleaseC
     }
     await response.body?.cancel().catch(() => {});
     return { ok: true, value: null };
+  }
+
+  /* ── Rename (bulk-rename-preview) ───────────────────────────────────────── */
+
+  /**
+   * POSTs one command and returns the id the instance assigned it.
+   *
+   * Shares `searchCommand`'s no-retry rule for the same reason, sharpened: a
+   * `RenameFiles` that lost its response would be issued twice, and the second
+   * issue would be against a library the first one already moved. The id comes
+   * back in the body here (unlike `searchCommand`, which discards it) because
+   * every rename command has to be waited on before its result can be read.
+   */
+  private async postCommand(
+    payload: Record<string, unknown>,
+    context: string,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<number>> {
+    const combined = this.withTimeout(signal);
+
+    let response: Response;
+    try {
+      response = await fetch(this.url('/command'), {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': this.apiKey,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: combined,
+        cache: 'no-store',
+      });
+    } catch (error) {
+      return { ok: false, error: { kind: 'unreachable', reason: describeNetworkError(error) } };
+    }
+
+    if (!response.ok) {
+      return { ok: false, error: classifyResponse(response, context) };
+    }
+
+    const body = await readJson(response, context);
+    if (!body.ok) return body;
+
+    const id = asNumberOrNull((body.value as { id?: unknown } | null)?.id);
+    if (id === null) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a command id.` },
+      };
+    }
+    return { ok: true, value: id };
+  }
+
+  /**
+   * Rescan one title so the preview is computed against what is on disk now
+   * (ADR-2). The two backends disagree on the shape — Sonarr takes a scalar
+   * `seriesId`, Radarr an array `movieIds` — and on nothing else.
+   */
+  async rescanTitle(
+    target: { kind: RenameTitleKind; upstreamId: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<number>> {
+    const payload = target.kind === 'series'
+      ? { name: 'RescanSeries', seriesId: target.upstreamId }
+      : { name: 'RescanMovie', movieIds: [target.upstreamId] };
+    return this.postCommand(payload, `${this.kind} rescan command`, signal);
+  }
+
+  async commandStatus(
+    commandId: number,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrCommandStatus>> {
+    const context = `${this.kind} command status`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url(`/command/${commandId}`),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    const record = (body.value ?? {}) as { id?: unknown; status?: unknown; message?: unknown };
+    return {
+      ok: true,
+      value: {
+        id: asNumber(record.id, commandId),
+        state: toCommandState(record.status),
+        message: asStringOrNull(record.message),
+      },
+    };
+  }
+
+  /**
+   * `GET /rename` — preview only. It computes; it moves nothing.
+   *
+   * An empty array is a real answer ("nothing pending"), and the caller must be
+   * able to tell it apart from a read that failed (REQ-RENAME-006) — which is
+   * why the not-an-array case is an error rather than a silent `[]`.
+   */
+  async renamePreview(
+    target: { kind: RenameTitleKind; upstreamId: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrRenameRow[]>> {
+    const context = `${this.kind} rename preview`;
+    const combined = this.withTimeout(signal);
+
+    const url = target.kind === 'series'
+      ? this.url('/rename', { seriesId: target.upstreamId })
+      : this.url('/rename', { movieId: target.upstreamId });
+
+    const response = await requestWithRetry(url, this.requestInit(combined), combined);
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a rename array.` },
+      };
+    }
+
+    const rows: ArrRenameRow[] = [];
+    for (const raw of body.value) {
+      const row = toRenameRow(raw, target.kind);
+      if (row) rows.push(row);
+    }
+    return { ok: true, value: rows };
+  }
+
+  /**
+   * `GET /episodefile?seriesId=` / `GET /moviefile?movieId=` — every file the
+   * instance holds for the title, whether or not it has a rename pending.
+   *
+   * One extra read per title, which the measured preview cost (Sonarr median
+   * 21ms) makes affordable, and it buys the one collision shape the preview
+   * cannot show: a destination already occupied by a file that is *not* being
+   * renamed, and so is not in the preview at all.
+   */
+  /**
+   * The title's root directory, as the instance reports it.
+   *
+   * `GET /rename` speaks in paths relative to this, so it is the one piece
+   * needed to turn a proposed destination into something the filesystem
+   * endpoint can be asked about.
+   */
+  private async titleRoot(
+    target: { kind: RenameTitleKind; upstreamId: number },
+    signal: AbortSignal,
+  ): Promise<ClientResult<string>> {
+    const context = `${this.kind} title path`;
+    const url = target.kind === 'series'
+      ? this.url(`/series/${target.upstreamId}`)
+      : this.url(`/movie/${target.upstreamId}`);
+
+    const response = await requestWithRetry(url, this.requestInit(signal), signal);
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    const path = asStringOrNull((body.value as Record<string, unknown> | null)?.path);
+    if (!path) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not include a path.` },
+      };
+    }
+    return { ok: true, value: path };
+  }
+
+  async listExistingPaths(
+    target: { kind: RenameTitleKind; upstreamId: number },
+    relativeDirs: string[],
+    signal?: AbortSignal,
+  ): Promise<ClientResult<string[]>> {
+    const context = `${this.kind} directory listing`;
+    const combined = this.withTimeout(signal);
+
+    const root = await this.titleRoot(target, combined);
+    if (!root.ok) return root;
+
+    const base = root.value.replace(/[/\\]+$/, '');
+    const found: string[] = [];
+
+    for (const dir of [...new Set(relativeDirs)]) {
+      // The trailing slash is load-bearing. Without it the endpoint resolves the
+      // *parent* of the named directory and answers about the wrong folder —
+      // measured on 2026-09-17, where the query returned the series root's four
+      // files instead of the season's forty-six.
+      const absolute = dir === '' ? `${base}/` : `${base}/${dir}/`;
+      const url = this.url('/filesystem', { path: absolute, includeFiles: true });
+
+      const response = await requestWithRetry(url, this.requestInit(combined), combined);
+      if (!response.ok) return response;
+      if (!response.value.ok) {
+        return { ok: false, error: classifyResponse(response.value, context) };
+      }
+
+      const body = await readJson(response.value, context);
+      if (!body.ok) return body;
+
+      const files = (body.value as Record<string, unknown> | null)?.files;
+      // A directory that does not exist yet is not an error — it is the answer
+      // "nothing occupies this destination".
+      if (!Array.isArray(files)) continue;
+
+      for (const raw of files) {
+        if (!raw || typeof raw !== 'object') continue;
+        const name = asStringOrNull((raw as Record<string, unknown>).name);
+        if (!name) continue;
+        found.push(dir === '' ? name : `${dir}/${name}`);
+      }
+    }
+
+    return { ok: true, value: found };
+  }
+
+  /**
+   * `RenameFiles` with an explicit file list (ADR-6). `RenameSeries` /
+   * `RenameMovie` are not a fallback: they cannot *represent* an exclusion, so
+   * a row the operator unchecked would be renamed anyway.
+   */
+  async renameFiles(
+    request: RenameCommandRequest,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<number>> {
+    if (request.fileIds.length === 0) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: 'Refusing to issue RenameFiles with no files.' },
+      };
+    }
+
+    const payload = request.kind === 'series'
+      ? { name: 'RenameFiles', seriesId: request.titleId, files: request.fileIds }
+      : { name: 'RenameFiles', movieId: request.titleId, files: request.fileIds };
+    return this.postCommand(payload, `${this.kind} rename command`, signal);
+  }
+}
+
+/* ── Rename parsing ───────────────────────────────────────────────────────── */
+
+/**
+ * Sonarr and Radarr name the same three things differently and agree on
+ * nothing else. Measured key unions (research.md): Sonarr returns
+ * `episodeFileId`/`existingPath`/`newPath`/`episodeNumbers`/`seasonNumber`/
+ * `seriesId`; Radarr returns `movieFileId`/`existingPath`/`newPath`/`movieId`.
+ *
+ * A row missing a file id or either path is dropped rather than defaulted: a
+ * rename row with a guessed path is worse than one that is absent, because the
+ * operator would approve the guess.
+ */
+function toRenameRow(raw: unknown, kind: RenameTitleKind): ArrRenameRow | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+
+  const fileId = asNumberOrNull(kind === 'series' ? record.episodeFileId : record.movieFileId);
+  if (fileId === null) return null;
+
+  const existingPath = asStringOrNull(record.existingPath);
+  const proposedPath = asStringOrNull(record.newPath);
+  if (!existingPath || !proposedPath) return null;
+
+  // Radarr has no analogue — null means "not applicable", never "one".
+  const episodeNumbers = record.episodeNumbers;
+  const episodeCount = kind === 'series' && Array.isArray(episodeNumbers)
+    ? episodeNumbers.length
+    : null;
+
+  return { fileId, existingPath, proposedPath, episodeCount };
+}
+
+/**
+ * An unrecognised status becomes `unknown`, not `completed`. The caller treats
+ * `unknown` as "keep waiting, then verify" — mapping it to a terminal success
+ * would report files as renamed on the strength of a string nobody checked.
+ */
+function toCommandState(value: unknown): ArrCommandStatus['state'] {
+  switch (value) {
+    case 'queued':
+      return 'queued';
+    case 'started':
+      return 'started';
+    case 'completed':
+      return 'completed';
+    case 'failed':
+    case 'aborted':
+    case 'cancelled':
+      return 'failed';
+    default:
+      return 'unknown';
   }
 }
 

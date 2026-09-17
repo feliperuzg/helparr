@@ -588,3 +588,139 @@ export interface BulkSearchOutcome {
   status: 'queued' | 'failed';
   reason: string | null;
 }
+
+/* ── Bulk rename (bulk-rename-preview) ────────────────────────────────────── */
+
+/**
+ * Which half of the *arr world a title lives in.
+ *
+ * Kept separate from `InstanceKind` because the same Sonarr instance answers
+ * about `series` while a Radarr answers about `movie`, and the plan rows are
+ * read back long after the instance that produced them may have been deleted.
+ */
+export type RenameTitleKind = 'series' | 'movie';
+
+export const RENAME_PLAN_PHASES = [
+  'building',
+  'ready',
+  'applying',
+  'done',
+  'expired',
+  'refused',
+] as const;
+export type RenamePlanPhase = (typeof RENAME_PLAN_PHASES)[number];
+
+/** One title the operator selected. The unit FR1 calls a scope entry. */
+export interface RenameScopeEntry {
+  instanceId: string;
+  kind: RenameTitleKind;
+  upstreamId: number;
+  /** Carried so the progress list can name a title before its preview lands. */
+  label: string;
+}
+
+/**
+ * Why a row deserves a distinct flag (FR6, ADR-9).
+ *
+ * These are helparr's own derivations, not relayed upstream text — the spike
+ * established that neither Sonarr nor Radarr returns any warning field. The
+ * wording rendered for each must therefore never attribute the warning to the
+ * instance.
+ */
+export const RENAME_WARNINGS = [
+  /** `dirname(proposed) !== dirname(existing)` — a move, not a rename. */
+  'moves-directory',
+  /** Two rows in one plan resolve to the same destination path. */
+  'destination-collision',
+  /**
+   * A file that is *not* in this plan already occupies the destination.
+   *
+   * Observed live on 2026-09-17 rather than reasoned about: Sonarr proposed
+   * moving a duplicate into a path its correctly-named counterpart already
+   * held, accepted the command, reported it `completed`/`successful`, and
+   * renamed nothing.
+   *
+   * The occupant was a file Sonarr had never imported, so it appeared in no
+   * library endpoint. Detecting it means asking the instance what is actually
+   * on disk — one read per destination directory. See ADR-9.
+   */
+  'destination-exists',
+  /** One file covering more than one episode. Sonarr only. */
+  'multi-episode',
+] as const;
+export type RenameWarning = (typeof RENAME_WARNINGS)[number];
+
+export const RENAME_OUTCOMES = ['pending', 'succeeded', 'failed', 'skipped'] as const;
+export type RenameOutcome = (typeof RENAME_OUTCOMES)[number];
+
+/** One file the upstream preview proposed to rename. */
+export interface RenamePlanRow {
+  id: string;
+  instanceId: string | null;
+  instanceLabel: string;
+  instanceKind: InstanceKind;
+  titleKind: RenameTitleKind;
+  titleUpstreamId: number;
+  titleLabel: string;
+  /** `episodeFileId` / `movieFileId` — what `RenameFiles` takes (ADR-6). */
+  fileId: number;
+  /** Half of the precondition pair (ADR-3), captured at preview time. */
+  existingPath: string;
+  proposedPath: string;
+  warnings: RenameWarning[];
+  excluded: boolean;
+  outcome: RenameOutcome;
+  outcomeDetail: string | null;
+}
+
+/**
+ * A title that was selected and had nothing pending (FR5).
+ *
+ * Reported rather than dropped: "no changes" and "we never asked" look
+ * identical to an operator, and only one of them is true.
+ */
+export interface RenameTitleStatus {
+  instanceId: string;
+  instanceLabel: string;
+  kind: RenameTitleKind;
+  upstreamId: number;
+  label: string;
+  state: 'pending' | 'rescanning' | 'previewing' | 'no-changes' | 'has-changes' | 'errored';
+  fileCount: number;
+  /** Verbatim upstream failure, when this one title could not be read. */
+  reason: string | null;
+}
+
+export interface RenamePlanDto {
+  id: string;
+  phase: RenamePlanPhase;
+  titles: RenameTitleStatus[];
+  rows: RenamePlanRow[];
+  /** Every row, excluded or not — what FR4's "total" means. */
+  totalFiles: number;
+  totalTitles: number;
+  /** What the typed-count gate is checked against: non-excluded rows (FR7). */
+  affectedFiles: number;
+  builtAt: string | null;
+  expiresAt: string | null;
+  appliedAt: string | null;
+  /**
+   * Set when a plan was refused — drift or expiry. The UI offers regeneration
+   * and nothing else; there is no field here a bypass could travel through.
+   */
+  refusal: RenameRefusal | null;
+}
+
+export interface RenameRefusal {
+  kind: 'expired' | 'precondition-drift' | 'empty';
+  reason: string;
+  /** Paths whose precondition no longer holds, for the refusal detail. */
+  drifted: string[];
+}
+
+/** The final summary FR13 requires — three buckets, counted from outcomes. */
+export interface RenameApplySummary {
+  succeeded: number;
+  failed: number;
+  skipped: number;
+}

@@ -156,6 +156,85 @@ export function recordOperation(input: OperationInput): OperationRead {
   };
 }
 
+/* ── Rename file outcomes (bulk-rename-preview, T7) ───────────────────────── */
+
+/**
+ * One file's result within a rename run (REQ-OPS-001's rename extension,
+ * NFR7). `operation.detail` is a flat `string[]` — enough for a grab's handful
+ * of rejection reasons, not for "reconstruct which files were renamed from what
+ * to what" across a plan, and overloading it with structured JSON would make
+ * `parseDetail`'s fallback path ambiguous.
+ */
+export interface RenameFileOutcomeInput {
+  planRowId: string;
+  existingPath: string;
+  proposedPath: string;
+  outcome: 'succeeded' | 'failed' | 'skipped';
+  detail: string | null;
+}
+
+/**
+ * Writes the parent operation and every file outcome in one transaction.
+ *
+ * Deliberately *not* a pending-then-finalize pair. The append-only rule above
+ * is a property of this file's code — there is no `UPDATE` against `operation`
+ * anywhere in it — and an in-flight rename does not need the log to hold its
+ * state, because `rename_plan` already does. So the log row is written once,
+ * when every outcome is known, exactly like a grab's.
+ *
+ * `outcome` is `'succeeded'` only when every file succeeded. A partial run is
+ * recorded `'failed'` with the per-file truth in the child rows, because
+ * REQ-RENAME-016 forbids presenting a partial run as a complete one.
+ */
+export function recordRenameOperation(
+  input: OperationInput,
+  files: RenameFileOutcomeInput[],
+): OperationRead {
+  const db = getDb();
+  const insertFile = db.prepare(`
+    INSERT INTO rename_file_outcome
+      (id, operation_id, plan_row_id, existing_path, proposed_path, outcome, detail)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  return db.transaction(() => {
+    const operation = recordOperation(input);
+    for (const file of files) {
+      insertFile.run(
+        randomUUID(),
+        operation.id,
+        file.planRowId,
+        // Copied rather than joined: REQ-OPS-001 requires the log to survive
+        // the plan being purged, and plans are ephemeral working state.
+        file.existingPath,
+        file.proposedPath,
+        file.outcome,
+        file.detail,
+      );
+    }
+    return operation;
+  })();
+}
+
+export function listRenameFileOutcomes(operationId: string): RenameFileOutcomeInput[] {
+  return (getDb().prepare(`
+    SELECT plan_row_id, existing_path, proposed_path, outcome, detail
+      FROM rename_file_outcome WHERE operation_id = ? ORDER BY rowid
+  `).all(operationId) as Array<{
+    plan_row_id: string;
+    existing_path: string;
+    proposed_path: string;
+    outcome: 'succeeded' | 'failed' | 'skipped';
+    detail: string | null;
+  }>).map((row) => ({
+    planRowId: row.plan_row_id,
+    existingPath: row.existing_path,
+    proposedPath: row.proposed_path,
+    outcome: row.outcome,
+    detail: row.detail,
+  }));
+}
+
 /**
  * `rejected` is a split of `failed`, not a third outcome — the table has two
  * outcome values because REQ-OPS-001 requires a rejected grab to be recorded as

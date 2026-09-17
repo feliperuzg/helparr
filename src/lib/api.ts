@@ -15,6 +15,8 @@ import type {
   QueueResponse,
   RemovalOutcome,
   RemovalRequest,
+  RenamePlanDto,
+  RenameScopeEntry,
   SearchAvailability,
   SearchCriteria,
   SearchResponse,
@@ -237,6 +239,42 @@ export const api = {
   /** Collapses an open breaker's reset window so the next read gets through. */
   retryInstance: (id: string) =>
     request<void>(`/api/instances/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+
+  /* ── Bulk rename (bulk-rename-preview, T9) ────────────────────────────── */
+
+  /**
+   * Starts a build and returns its id. Renames nothing — a plan is inert until
+   * `applyRenamePlan` names it.
+   */
+  createRenamePlan: (scope: RenameScopeEntry[]) =>
+    request<{ planId: string }>('/api/rename/plan', {
+      method: 'POST',
+      body: JSON.stringify({ scope }),
+    }).then((r) => r.planId),
+
+  /** The whole plan, whatever phase it is in — build poll, apply poll and final read. */
+  renamePlan: (planId: string, signal?: AbortSignal) =>
+    request<RenamePlanDto>(`/api/rename/plan/${encodeURIComponent(planId)}`, { signal }),
+
+  /** Exclusion by server-minted row id (FR7). Returns the re-read plan. */
+  setRenameExclusion: (planId: string, rowIds: string[], excluded: boolean) =>
+    request<RenamePlanDto>(`/api/rename/plan/${encodeURIComponent(planId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ rowIds, excluded }),
+    }),
+
+  /**
+   * The only call in helparr that can rename a file.
+   *
+   * `typedCount` is the entire body, and that is deliberate (NFR1): there is no
+   * argument here for naming files, and no flag for skipping the check. A
+   * caller who wants a different set of files has to build a different plan.
+   */
+  applyRenamePlan: (planId: string, typedCount: number) =>
+    request<{ planId: string; rowCount: number }>(
+      `/api/rename/plan/${encodeURIComponent(planId)}/apply`,
+      { method: 'POST', body: JSON.stringify({ typedCount }) },
+    ),
 
   // The auth endpoints opt out of the bounce. A 401 here means "that password
   // is wrong", not "your session lapsed" — redirecting to /login would reload

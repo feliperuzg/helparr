@@ -11,6 +11,7 @@ import type {
   QueueRecord,
   ReleaseRead,
   RemovalRequest,
+  RenameTitleKind,
   SeriesDetail,
   SeriesSummary,
   TorrentState,
@@ -312,6 +313,125 @@ export interface GapClient extends InstanceClient {
 export function isGapClient(client: InstanceClient): client is GapClient {
   return (client.kind === 'sonarr' || client.kind === 'radarr')
     && typeof (client as GapClient).wantedMissing === 'function';
+}
+
+/* ── Rename capability (bulk-rename-preview, T1) ──────────────────────────── */
+
+/**
+ * One row of `GET /api/v3/rename`, normalized across two shapes that agree on
+ * almost nothing.
+ *
+ * Measured against Sonarr 4.0.19 and Radarr 6.3.0 (research.md): Sonarr returns
+ * `episodeFileId`, `episodeNumbers`, `existingPath`, `newPath`, `seasonNumber`,
+ * `seriesId`; Radarr returns `movieFileId`, `existingPath`, `newPath`,
+ * `movieId`. Neither returns anything warning-shaped, which is why `warnings`
+ * is absent here and derived downstream instead (ADR-9).
+ */
+export interface ArrRenameRow {
+  /** `episodeFileId` on Sonarr, `movieFileId` on Radarr. */
+  fileId: number;
+  existingPath: string;
+  proposedPath: string;
+  /**
+   * How many episodes this one file covers. Sonarr only — Radarr has no
+   * analogue, and null means "not applicable" rather than "one".
+   */
+  episodeCount: number | null;
+}
+
+/**
+ * `RenameFiles` (ADR-6), never `RenameSeries`/`RenameMovie`.
+ *
+ * The title id travels with the file ids because both APIs require it: the
+ * command is scoped to one title and carries the subset of its files to touch.
+ * That subset is the whole point — it is the only shape that can express an
+ * exclusion, so it is the only shape that can tell the truth about the plan the
+ * operator approved.
+ */
+export interface RenameCommandRequest {
+  kind: RenameTitleKind;
+  titleId: number;
+  fileIds: number[];
+}
+
+/**
+ * A command's state as the instance reports it.
+ *
+ * The *arr command endpoint is asynchronous — a POST returns an id, not an
+ * outcome. Nothing may be presented to the operator as renamed on the strength
+ * of this alone (REQ-OPS-006): completion means the instance stopped working,
+ * not that any particular file moved. The per-file truth comes from the
+ * preview re-run in ADR-7.
+ */
+export interface ArrCommandStatus {
+  id: number;
+  state: 'queued' | 'started' | 'completed' | 'failed' | 'unknown';
+  /** Verbatim upstream failure text, when the command itself failed. */
+  message: string | null;
+}
+
+export interface RenameClient extends InstanceClient {
+  /**
+   * Rescan one title and return the command id to wait on.
+   *
+   * ADR-2 puts this before every preview: the target filename is derived from
+   * mediainfo, so previewing a stale library bakes stale encoding details into
+   * names the operator then approves.
+   */
+  rescanTitle(
+    target: { kind: RenameTitleKind; upstreamId: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<number>>;
+
+  commandStatus(commandId: number, signal?: AbortSignal): Promise<ClientResult<ArrCommandStatus>>;
+
+  /**
+   * The preview. An empty result is a real answer — "nothing pending" — and is
+   * never conflated with a failed read (FR5, REQ-RENAME-006).
+   */
+  renamePreview(
+    target: { kind: RenameTitleKind; upstreamId: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrRenameRow[]>>;
+
+  /**
+   * Which of `relativeDirs`' contents already exist on disk, as relative paths
+   * in the same frame `ArrRenameRow` reports them.
+   *
+   * Needed because the preview does not check whether its own destination is
+   * free. Measured on 2026-09-17: Sonarr proposed moving a file onto a path
+   * that already held another file, accepted the `RenameFiles` command,
+   * reported it `completed` / `successful` — and renamed nothing, logging
+   * `DestinationAlreadyExistsException` where only its own operator would see
+   * it.
+   *
+   * The occupant is invisible to every other endpoint here. It has no rename
+   * pending, so it is not in the preview; and in the observed case it was not
+   * even an imported file, so it was not in `/episodefile` either. The
+   * instance's own filesystem endpoint is the only thing that can see it.
+   * helparr still never touches a disk — it asks the instance, which owns the
+   * mount.
+   */
+  listExistingPaths(
+    target: { kind: RenameTitleKind; upstreamId: number },
+    relativeDirs: string[],
+    signal?: AbortSignal,
+  ): Promise<ClientResult<string[]>>;
+
+  /** Issues `RenameFiles`, returning the command id. Never retried. */
+  renameFiles(
+    request: RenameCommandRequest,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<number>>;
+}
+
+/**
+ * Narrowed by kind for the same reason `isGapClient` is: only Sonarr and Radarr
+ * own files on disk. Prowlarr and the download client would 404 on every path.
+ */
+export function isRenameClient(client: InstanceClient): client is RenameClient {
+  return (client.kind === 'sonarr' || client.kind === 'radarr')
+    && typeof (client as RenameClient).renamePreview === 'function';
 }
 
 export interface ClientConfig {
