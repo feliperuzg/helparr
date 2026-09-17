@@ -89,6 +89,8 @@ export interface FakeArr {
   wantedRequests: Array<{ params: Record<string, string> }>;
   /** What `GET /series` returns — the Sonarr join source (ADR-3). */
   setSeries: (series: unknown[]) => void;
+  /** Radarr's `GET /movie` library listing — the rename scope picker's source. */
+  setMovies: (movies: unknown[]) => void;
   /**
    * What `GET /series/{id}` returns — the per-season statistics the season
    * confirmation reads (ADR-4). `null` answers 404, which is the shape a failed
@@ -285,6 +287,7 @@ export async function startFakeArr(options: {
   let wanted: FakeGapRecord[] = [];
   let wantedTotalOverride: number | null = null;
   let series: unknown[] = [];
+  let movies: unknown[] = [];
   let seriesDetail: unknown | null = null;
   let profiles: Array<{ id: number; name: string }> = [];
   let history: unknown[] = [];
@@ -433,6 +436,11 @@ export async function startFakeArr(options: {
       return;
     }
 
+    if (url.pathname === `${apiBase}/movie`) {
+      send(200, movies);
+      return;
+    }
+
     if (url.pathname.startsWith(`${apiBase}/movie/`)) {
       if (seriesDetail === null) {
         send(404, { error: 'Not found' });
@@ -536,6 +544,7 @@ export async function startFakeArr(options: {
     setWanted: (records) => { wanted = records; },
     setWantedTotal: (total) => { wantedTotalOverride = total; },
     setSeries: (next) => { series = next; },
+    setMovies: (next) => { movies = next; },
     setSeriesDetail: (next) => { seriesDetail = next; },
     setProfiles: (next) => { profiles = next; },
     setHistory: (events) => { history = events; },

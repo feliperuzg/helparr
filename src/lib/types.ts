@@ -718,6 +718,35 @@ export interface RenameRefusal {
   drifted: string[];
 }
 
+/**
+ * One selectable title in the scope picker (FR1).
+ *
+ * Only titles the instance holds at least one file for appear here — a rename
+ * moves a file, so a monitored-but-absent title has nothing to preview, and
+ * offering it would make "no changes" the picker's most common outcome for a
+ * reason the operator could have been told before selecting.
+ */
+export interface RenameTitleOption {
+  /** `${instanceId}:${kind}:${upstreamId}` — the same composite a plan row is keyed by. */
+  id: string;
+  instanceId: string;
+  instanceLabel: string;
+  instanceKind: InstanceKind;
+  kind: RenameTitleKind;
+  upstreamId: number;
+  label: string;
+  fileCount: number;
+}
+
+/**
+ * The picker's read, with per-instance failures attributed rather than folded
+ * into an empty list — the same contract `GapsResponse` carries.
+ */
+export interface RenameTitlesRead {
+  titles: RenameTitleOption[];
+  errors: InstanceReadError[];
+}
+
 /** The final summary FR13 requires — three buckets, counted from outcomes. */
 export interface RenameApplySummary {
   succeeded: number;

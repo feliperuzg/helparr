@@ -370,7 +370,33 @@ export interface ArrCommandStatus {
   message: string | null;
 }
 
+/**
+ * One selectable title, reduced to what the scope picker needs (FR1).
+ *
+ * Deliberately not `SeriesSummary`: that shape is Sonarr-only and carries a
+ * monitored flag and a quality profile the picker has no use for, while a film
+ * has neither. Three fields cover both backends and nothing here is joined
+ * against anything, so a thousand-title library stays a small response.
+ */
+export interface ArrRenameTitle {
+  upstreamId: number;
+  label: string;
+  /** Files the instance holds for this title. Never null — a title it cannot count is not offered. */
+  fileCount: number;
+}
+
 export interface RenameClient extends InstanceClient {
+  /**
+   * Every title on this instance that has at least one file (FR1).
+   *
+   * The file floor is the whole filter: a rename moves a file, so a title with
+   * none has nothing to preview, and offering it would make the picker's most
+   * common outcome "no changes" for a reason the operator could have been told
+   * up front. It is also what keeps the list short — a library is mostly
+   * monitored-but-absent on any instance that is still filling in.
+   */
+  listTitles(signal?: AbortSignal): Promise<ClientResult<ArrRenameTitle[]>>;
+
   /**
    * Rescan one title and return the command id to wait on.
    *

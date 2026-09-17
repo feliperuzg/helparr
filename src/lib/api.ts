@@ -17,6 +17,7 @@ import type {
   RemovalRequest,
   RenamePlanDto,
   RenameScopeEntry,
+  RenameTitlesRead,
   SearchAvailability,
   SearchCriteria,
   SearchResponse,
@@ -241,6 +242,16 @@ export const api = {
     request<void>(`/api/instances/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
 
   /* ── Bulk rename (bulk-rename-preview, T9) ────────────────────────────── */
+
+  /**
+   * Every title the operator could rename, across every instance (FR1, T10).
+   *
+   * A read, and the only one the picker makes. Selecting titles here reaches no
+   * instance at all — the first upstream call of the whole flow is the rescan
+   * `createRenamePlan` starts.
+   */
+  renameTitles: (signal?: AbortSignal) =>
+    request<RenameTitlesRead>('/api/rename/titles', { signal }),
 
   /**
    * Starts a build and returns its id. Renames nothing — a plan is inert until

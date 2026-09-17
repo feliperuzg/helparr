@@ -24,6 +24,7 @@ import {
   type ArrQueueRead,
   type ArrQueueRecord,
   type ArrRenameRow,
+  type ArrRenameTitle,
   type ClientResult,
   type GapClient,
   type PushOutcome,
@@ -822,14 +823,76 @@ export class ArrClient extends BaseArrClient
   }
 
   /**
-   * `GET /episodefile?seriesId=` / `GET /moviefile?movieId=` — every file the
-   * instance holds for the title, whether or not it has a rename pending.
+  /**
+   * The picker's source list (FR1, T10).
    *
-   * One extra read per title, which the measured preview cost (Sonarr median
-   * 21ms) makes affordable, and it buys the one collision shape the preview
-   * cannot show: a destination already occupied by a file that is *not* being
-   * renamed, and so is not in the preview at all.
+   * `GET /series` on Sonarr, `GET /movie` on Radarr — the same two library
+   * reads the gaps join already makes, asked for a different reason and reduced
+   * on the way in. Both endpoints return the entire library in one response
+   * with no pagination, and both return objects large enough (images, seasons,
+   * statistics, alternate titles) that a thousand-title library is megabytes;
+   * none of that survives past the three fields below.
+   *
+   * Titles with no file are dropped here rather than in the UI, so the cost of
+   * a mostly-empty library is paid once on the server instead of being shipped
+   * to the browser and filtered there.
    */
+  async listTitles(signal?: AbortSignal): Promise<ClientResult<ArrRenameTitle[]>> {
+    const context = `${this.kind} title list`;
+    // The same deadline the library read uses: this is the same size of read,
+    // and the default 8s is measured for single-record calls.
+    const combined = this.withTimeout(signal, GAPS_DEADLINE_MS);
+
+    const url = this.kind === 'sonarr' ? this.url('/series') : this.url('/movie');
+
+    const response = await requestWithRetry(url, this.requestInit(combined), combined);
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return an array.` },
+      };
+    }
+
+    const titles: ArrRenameTitle[] = [];
+    for (const raw of body.value) {
+      if (!raw || typeof raw !== 'object') continue;
+      const record = raw as Record<string, unknown>;
+
+      const upstreamId = asNumber(record.id, -1);
+      if (upstreamId < 0) continue;
+
+      const fileCount = this.kind === 'sonarr'
+        // Sonarr counts files per series in `statistics`; a series whose
+        // statistics block is missing is treated as uncountable, not as empty.
+        ? asNumber((record.statistics as Record<string, unknown> | undefined)?.episodeFileCount, 0)
+        // A film is one file or none. `hasFile` is the field both Radarr v3 and
+        // v6 agree on — `movieFile` is absent from the list response on some
+        // builds even when the film has one.
+        : (record.hasFile === true ? 1 : 0);
+
+      if (fileCount < 1) continue;
+
+      titles.push({
+        upstreamId,
+        label: this.kind === 'sonarr' ? asString(record.title, 'Untitled series') : filmLabel(record),
+        fileCount,
+      });
+    }
+
+    // Sorted here so every instance's slice arrives in the same order and the
+    // picker never has to re-sort a list it may be showing only the head of.
+    titles.sort((a, b) => a.label.localeCompare(b.label));
+    return { ok: true, value: titles };
+  }
+
   /**
    * The title's root directory, as the instance reports it.
    *
@@ -1052,6 +1115,19 @@ function episodeLabel(raw: Record<string, unknown>): string | null {
     .filter((code): code is string => code !== null);
 
   return codes.length > 0 ? `${title} — ${codes.join(', ')}` : title;
+}
+
+/**
+ * A film from `GET /movie`, where title and year sit at the top level.
+ *
+ * Distinct from `movieLabel` below, which reads the nested `movie` object a
+ * *queue record* wraps a film in. Two shapes, two readers — a single one that
+ * probed for both would silently label one of them wrong.
+ */
+function filmLabel(raw: Record<string, unknown>): string {
+  const title = asString(raw.title, 'Untitled film');
+  const year = asNumber(raw.year, 0);
+  return year > 0 ? `${title} (${year})` : title;
 }
 
 function movieLabel(raw: Record<string, unknown>): string | null {
