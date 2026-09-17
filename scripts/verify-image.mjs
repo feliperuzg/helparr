@@ -187,7 +187,15 @@ function checkImageConfig() {
   );
 
   const entrypoint = docker(['image', 'inspect', '-f', '{{json .Config.Entrypoint}}', IMAGE]);
-  assert(entrypoint.includes('server.js'), 'starts the standalone server', entrypoint);
+  assert(entrypoint.includes('start.mjs'), 'starts through the shared launcher', entrypoint);
+
+  // The launcher defaults to loopback, which inside a container means
+  // unreachable. Checked as an image property rather than by connecting,
+  // because a published port would hide it: `docker run -p` forwards to the
+  // container's interface, and a server bound to 127.0.0.1 inside would simply
+  // refuse (FR6 / REQ-DEPLOY-006).
+  const env = docker(['image', 'inspect', '-f', '{{json .Config.Env}}', IMAGE]);
+  assert(env.includes('HOSTNAME=0.0.0.0'), 'overrides the loopback default for the container', env);
 }
 
 function checkImageContents() {

@@ -129,6 +129,15 @@ required.
 | `HELPARR_BASE_PATH` | no | *(none)* | Serve under a sub-path (e.g. `/helparr`) behind a reverse proxy. Baked at build time, not runtime. |
 | `HELPARR_LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error`. Secrets are redacted at every level. |
 | `HELPARR_QUEUE_REFRESH_SECONDS` | no | `30` | How often the queue screen re-reads your instances. Minimum 5 — a lower value is refused, not silently replaced. |
+| `PORT` | no | `3000` | The port to listen on. Unprefixed because it is the server's, not helparr's, and every process manager already knows the name. |
+| `HOSTNAME` | no | `127.0.0.1` | The address to listen on. **Loopback by default** — bare metal is assumed to be behind something. Set `0.0.0.0` to accept connections from other machines. The image sets it to `0.0.0.0` already, since a container reached by a published port has nothing else to bind. |
+
+Two notes on `HOSTNAME`, because it is the one variable here helparr did not
+invent. Some environments export it with the machine's own name — Docker sets
+it to the container id — and helparr treats *any* value you set as deliberate,
+so if yours does, set it explicitly. And if nothing set it, the process says
+which address it bound on its first line of output rather than leaving you to
+find out by failing to connect.
 
 Every one of these is read and validated **once, at startup**. A value helparr
 cannot use stops the process with a message naming the variable, what was
@@ -199,7 +208,7 @@ Then run it as a service:
 # /etc/systemd/system/helparr.service
 [Service]
 WorkingDirectory=/opt/helparr
-ExecStart=/usr/bin/node server.js
+ExecStart=/usr/bin/node start.mjs
 Environment=PORT=3000
 Environment=HELPARR_DB_PATH=/var/lib/helparr/helparr.db
 EnvironmentFile=/etc/helparr/secrets.env   # HELPARR_ENCRYPTION_KEY lives here, mode 0600
@@ -208,6 +217,20 @@ User=helparr
 
 [Install]
 WantedBy=multi-user.target
+```
+
+`start.mjs`, not `server.js`: it is the same launcher the image runs, and its
+only job is the listen address. **With no `HOSTNAME` set this binds `127.0.0.1`
+and nothing else** — a bare-metal install is assumed to be reached through a
+proxy on the same host, and the alternative default would publish an app holding
+your whole stack's API keys on every interface the machine has. Add
+`Environment=HOSTNAME=0.0.0.0` when you actually want that.
+
+The user in `User=` needs to own the *directory* `HELPARR_DB_PATH` sits in, not
+just the file: SQLite writes `helparr.db-wal` and `helparr.db-shm` beside it.
+
+```bash
+install -d -o helparr -g helparr -m 0750 /var/lib/helparr
 ```
 
 ### Docker
@@ -228,6 +251,22 @@ helparr beside an existing *arr stack. It contains no secrets and is not meant
 to: the two required values come from a `.env` file beside it, and compose
 refuses to start without them rather than falling back to a default.
 
+A **named volume** is the path of least resistance, and the one above: Docker
+seeds it from the image, where `/data` is already owned by the `helparr` user.
+A **bind mount** is not seeded, so the host directory arrives owned by whoever
+made it and the container — running unprivileged, on purpose — cannot write to
+it. Give it the right owner first:
+
+```bash
+sudo install -d -o 1001 -g 1001 -m 0750 /srv/helparr
+docker run -d --name helparr -p 3000:3000 -v /srv/helparr:/data … helparr:local
+```
+
+`1001` is the uid the image creates and runs as. `HELPARR_DB_PATH` defaults to
+`/data/helparr.db` inside the image, so the database and its `-wal`/`-shm`
+sidecars stay on one mount — splitting them across a mount boundary corrupts
+the write-ahead log.
+
 The image is a multi-stage build on `node:22-slim`. It runs as a non-root user,
 declares `/data` as a volume, ships no application source and no second
 `node_modules` tree, and its `HEALTHCHECK` calls an unauthenticated liveness
@@ -245,13 +284,66 @@ volume, removed on exit.
 
 ### Behind a reverse proxy
 
-helparr expects to sit on a trusted LAN. If you put it behind nginx/Caddy/Traefik
-anyway, set `HELPARR_BASE_PATH` at **build** time to match the proxy's mount
-point — a mismatch is reported loudly at startup rather than silently 404-ing
-assets.
+At the root of a hostname there is nothing to configure — proxy to the port and
+you are done. Two forwarded headers are honoured if your proxy sets them, and
+neither is required:
 
-Exposing helparr to the public internet is explicitly outside its threat model.
-It holds the API keys to your entire stack behind a single password.
+| Header | What it changes | If it is absent |
+|---|---|---|
+| `X-Forwarded-Proto` | Whether the session cookie is marked `Secure`. | Falls back to the scheme of the request as the app saw it — which behind a TLS-terminating proxy is `http`, so the cookie is not marked `Secure`. Set this if the browser is speaking HTTPS. |
+| `X-Forwarded-For` | Who the login rate limiter counts against. | Every request arrives from the proxy's address, so *all* login attempts share one bucket and one attacker can lock out the household. |
+
+Both are trusted as given. helparr has no notion of which proxies are yours, so
+a client that can reach it directly can set `X-Forwarded-For` itself and sidestep
+the rate limit — one more reason the port belongs on a trusted network rather
+than published beside the proxy.
+
+Under a **sub-path** there is one more thing, and it is not a runtime setting. `HELPARR_BASE_PATH` is compiled into every asset URL by `next build`,
+so changing it means rebuilding:
+
+```bash
+# bare metal
+HELPARR_BASE_PATH=/helparr npm run build:standalone
+
+# container
+docker build --build-arg HELPARR_BASE_PATH=/helparr -t helparr:helparr-subpath .
+```
+
+Then serve it at the matching location, without stripping the prefix:
+
+```nginx
+location /helparr/ {
+    proxy_pass http://127.0.0.1:3000;   # note: no trailing /helparr
+}
+```
+
+Set the variable at runtime to something the build does not match and helparr
+**refuses to start**, naming both values. That is deliberate: the alternative is
+an app that loads, renders unstyled, and 404s every script — a failure that
+looks like a broken install rather than a one-line misconfiguration.
+
+### The trust boundary, plainly
+
+helparr assumes it is on a network you trust, and it is worth being exact about
+what that means:
+
+- **It speaks plain HTTP.** There is no TLS in the process and no certificate
+  configuration, because terminating TLS is the reverse proxy's job and doing it
+  in two places is how one of them ends up misconfigured. If the traffic leaves
+  your host, put a proxy in front of it — and have it set `X-Forwarded-Proto`,
+  or the session cookie will not be marked `Secure`.
+- **One password guards everything.** There are no user accounts, no roles, and
+  no second factor. Whoever has it can read and use every *arr API key helparr
+  holds.
+- **The API keys are encrypted at rest, not in use.** `HELPARR_ENCRYPTION_KEY`
+  protects the database file — someone who can read the process' memory or its
+  environment already has the keys.
+- **It trusts your instances.** Sonarr, Radarr and Prowlarr are treated as
+  honest; their responses are parsed, not defended against.
+
+Exposing helparr directly to the public internet is outside its threat model. On
+a LAN, or behind a VPN, or behind an authenticating proxy — that is what it was
+built for.
 
 ---
 

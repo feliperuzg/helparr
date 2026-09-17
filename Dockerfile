@@ -58,7 +58,11 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 # The container binds every interface: it is reached through the published port
 # or by compose DNS, and there is no reverse proxy inside the container to bind
-# loopback for. Bare metal defaults the other way (FR6 / REQ-DEPLOY-006).
+# loopback for. Stated here rather than left to the launcher's default, which is
+# loopback — that is the one this image has to override (FR6 / REQ-DEPLOY-006).
+#
+# It also has to be stated because Docker sets HOSTNAME to the container id
+# otherwise, and Next would try to bind *that*.
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 # Under the declared volume, so the database and its -wal/-shm sidecars share
@@ -94,4 +98,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "healthcheck.mjs"]
 
-ENTRYPOINT ["node", "server.js"]
+# The same launcher bare metal runs, not `server.js` directly. Its only job is
+# the listen-address default, which `ENV HOSTNAME` above has already answered —
+# so this is a no-op here, and that is the point: which file you run is not part
+# of the deployment contract, and the two targets cannot drift apart on it.
+ENTRYPOINT ["node", "start.mjs"]
