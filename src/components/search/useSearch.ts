@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
 
-import { api, type GrabInput } from '@/lib/api';
+import { api, type GrabInput, type SavedSearchInput } from '@/lib/api';
 import type {
   EvaluatedRelease,
   GrabOutcome,
@@ -11,6 +11,8 @@ import type {
   OperationsRead,
   ParsedTarget,
   ReleaseRead,
+  SavedScopeResolution,
+  SavedSearchRead,
   SearchAvailability,
   SearchCriteria,
   SearchResponse,
@@ -49,10 +51,40 @@ export function useIndexers() {
   });
 }
 
+/**
+ * What was submitted, and where it came from.
+ *
+ * `savedId` changes which route runs it. An ad-hoc search posts the criteria;
+ * a saved one posts only its id and lets the server re-resolve the scope
+ * against the roster that exists at that moment (ADR-6). The difference
+ * matters: the criteria held here were resolved against a roster read on
+ * mount, and a scope that has emptied since must be refused rather than
+ * quietly widened to every indexer.
+ */
+export interface SearchRequest {
+  criteria: SearchCriteria;
+  savedId: string | null;
+}
+
+interface RunOutcome {
+  /** Null only when a saved scope resolved to nothing — see the run route. */
+  response: SearchResponse | null;
+  /** Present only for a saved run. Always alongside `response`, never instead. */
+  resolution: SavedScopeResolution | null;
+}
+
 export interface UseSearchResult {
   /** The criteria of the search that produced `data`, or null before the first. */
   submitted: SearchCriteria | null;
+  /**
+   * The saved search the last run came from, or null for an ad-hoc one. The
+   * screen needs it to know whether `resolution` describes the saved search
+   * currently selected or a different one it has since moved on from.
+   */
+  submittedSavedId: string | null;
   data: SearchResponse | undefined;
+  /** The server's own resolution of the last saved run, if that is what it was. */
+  resolution: SavedScopeResolution | null;
   /** `data.results` with the seeder threshold applied. Empty before the first run. */
   results: ReleaseRead[];
   /** How many rows the threshold is hiding, so the toolbar can say so. */
@@ -61,6 +93,12 @@ export interface UseSearchResult {
   /** Only helparr itself being unreachable — every upstream failure is data. */
   error: Error | null;
   run: (criteria: SearchCriteria) => void;
+  /**
+   * Runs a saved search by id. The criteria come along only to key the cache
+   * and to fill the "no results for …" line — the scope the request is actually
+   * made with is the server's.
+   */
+  runSaved: (savedId: string, criteria: SearchCriteria) => void;
   /** Re-issues the last search. This is what the degradation banner's Retry does. */
   retry: () => void;
   /** Adjusts the threshold against the results already in hand — no new search. */
@@ -70,24 +108,34 @@ export interface UseSearchResult {
 
 export function useSearch(): UseSearchResult {
   const client = useQueryClient();
-  const [submitted, setSubmitted] = useState<SearchCriteria | null>(null);
+  const [submitted, setSubmitted] = useState<SearchRequest | null>(null);
   const [minSeeders, setMinSeeders] = useState(0);
 
   // The threshold is deliberately not part of the key or the request. It
   // filters nothing upstream — Prowlarr has already done the work — so making
   // it a search parameter would re-query every indexer to hide rows the browser
   // is already holding.
-  const fetched = useMemo<SearchCriteria | null>(
-    () => (submitted ? { ...submitted, minSeeders: 0 } : null),
+  const fetched = useMemo<SearchRequest | null>(
+    () => (submitted ? { ...submitted, criteria: { ...submitted.criteria, minSeeders: 0 } } : null),
     [submitted],
   );
 
-  const query = useQuery<SearchResponse>({
-    // Keyed by the criteria themselves, so changing the scope and searching
-    // again is a different search rather than a mutation of this one — the
-    // previous results stay in cache and coming back to them costs nothing.
+  const query = useQuery<RunOutcome>({
+    // Keyed by the request itself, so changing the scope and searching again is
+    // a different search rather than a mutation of this one — the previous
+    // results stay in cache and coming back to them costs nothing.
     queryKey: ['search', fetched],
-    queryFn: ({ signal }) => api.search(fetched as SearchCriteria, signal),
+    queryFn: async ({ signal }) => {
+      const request = fetched as SearchRequest;
+      if (request.savedId === null) {
+        return { response: await api.search(request.criteria, signal), resolution: null };
+      }
+      // One request, both halves. The route cannot answer with results alone
+      // or with unresolved references alone, which is why nothing here has to
+      // reconcile two calls that could disagree (ADR-6).
+      const run = await api.runSavedSearch(request.savedId, signal);
+      return { response: run.search, resolution: run.resolution };
+    },
     enabled: fetched !== null,
     // Results are a snapshot of a moment on the trackers. They do not go stale
     // in a way a background refetch could fix, and refetching would re-run the
@@ -101,7 +149,11 @@ export function useSearch(): UseSearchResult {
   });
 
   const run = useCallback((criteria: SearchCriteria) => {
-    setSubmitted(criteria);
+    setSubmitted({ criteria, savedId: null });
+  }, []);
+
+  const runSaved = useCallback((savedId: string, criteria: SearchCriteria) => {
+    setSubmitted({ criteria, savedId });
   }, []);
 
   const retry = useCallback(() => {
@@ -109,7 +161,8 @@ export function useSearch(): UseSearchResult {
     void client.invalidateQueries({ queryKey: ['search', fetched] });
   }, [client, fetched]);
 
-  const all = query.data?.available ? query.data.results : EMPTY;
+  const response = query.data?.response ?? undefined;
+  const all = response?.available ? response.results : EMPTY;
   // `null` seeders are usenet, which the threshold has no opinion about: a
   // seeder filter cannot exclude a protocol that has no seeders.
   const results = minSeeders === 0
@@ -117,13 +170,16 @@ export function useSearch(): UseSearchResult {
     : all.filter((r) => r.seeders === null || r.seeders >= minSeeders);
 
   return {
-    submitted,
-    data: query.data,
+    submitted: submitted?.criteria ?? null,
+    submittedSavedId: submitted?.savedId ?? null,
+    data: response,
+    resolution: query.data?.resolution ?? null,
     results,
     hiddenBySeeders: all.length - results.length,
     isFetching: query.isFetching,
     error: query.error,
     run,
+    runSaved,
     retry,
     setMinSeeders,
     minSeeders,
@@ -132,6 +188,50 @@ export function useSearch(): UseSearchResult {
 
 /** A stable empty array, so "no results yet" is not a new identity each render. */
 const EMPTY: ReleaseRead[] = [];
+
+export const SAVED_SEARCHES_KEY = ['search', 'saved'] as const;
+
+/**
+ * The saved-search list (REQ-SEARCH-013).
+ *
+ * Local SQLite, so unlike everything else on this screen it is cheap and
+ * refetching it costs no indexer anything. It is also deliberately independent
+ * of the roster query: the list has to render while Prowlarr is unreachable,
+ * because "what did I save" is exactly the question an operator asks when the
+ * screen is otherwise empty.
+ */
+export function useSavedSearches() {
+  return useQuery<SavedSearchRead[]>({
+    queryKey: SAVED_SEARCHES_KEY,
+    queryFn: ({ signal }) => api.savedSearches(signal),
+    retry: 1,
+    staleTime: 30_000,
+  });
+}
+
+export function useSaveSearch() {
+  const client = useQueryClient();
+  return useMutation<SavedSearchRead, Error, SavedSearchInput>({
+    mutationFn: (body) => api.saveSearch(body),
+    onSettled: () => client.invalidateQueries({ queryKey: SAVED_SEARCHES_KEY }),
+  });
+}
+
+export function useRenameSavedSearch() {
+  const client = useQueryClient();
+  return useMutation<SavedSearchRead, Error, { id: string; name: string }>({
+    mutationFn: ({ id, name }) => api.renameSavedSearch(id, name),
+    onSettled: () => client.invalidateQueries({ queryKey: SAVED_SEARCHES_KEY }),
+  });
+}
+
+export function useDeleteSavedSearch() {
+  const client = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => api.deleteSavedSearch(id),
+    onSettled: () => client.invalidateQueries({ queryKey: SAVED_SEARCHES_KEY }),
+  });
+}
 
 /**
  * What the destination makes of the release name (ADR-3).

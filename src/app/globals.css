@@ -951,6 +951,24 @@ select.input {
 }
 .stoolbar__row .chip-row { flex: 1; min-width: 0; }
 .stoolbar__select { width: auto; min-width: 150px; }
+
+/* Saved searches — a band under the toolbar, on the toolbar's inset so the
+   "Saved" label lines up with "Scope" and "Category" above it. Kept out of
+   `.stoolbar` itself because it is not a field of the form: it fills the form. */
+.saved {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.saved__actions {
+  display: flex; align-items: center; gap: var(--space-1);
+  /* Pushed to the trailing edge, away from the chips. Delete sits next to
+     Rename and both sit far from the chip a click lands on. */
+  margin-left: auto; flex: none;
+}
+/* The empty line takes the space the chips would have, so adding the first
+   saved search does not shunt the buttons sideways. */
+.saved__empty { flex: 1; min-width: 0; }
 .stoolbar__seeders { width: 76px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Disabled toolbar controls stay legible — the outage callout above them is

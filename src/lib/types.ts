@@ -331,6 +331,87 @@ export type SearchResponse =
   | ({ available: true } & SearchRead)
   | ({ available: false } & SearchAvailability);
 
+/* ── Saved searches (packaging-and-hardening) ─────────────────────────────── */
+
+/**
+ * One indexer a saved search was scoped to, as a reference rather than an id
+ * (ADR-6, REQ-SEARCH-014).
+ *
+ * Both halves are load-bearing and neither is redundant. The id is how the
+ * reference resolves while Prowlarr still knows it; the name is the only thing
+ * left to put on screen once it does not, and "indexer 7 is gone" is not an
+ * explanation anyone can act on. The name is also a second way to resolve: an
+ * indexer removed and re-added comes back with a new id and the same name.
+ */
+export interface SavedSearchRef {
+  indexerId: number;
+  name: string;
+}
+
+export interface SavedSearchRead {
+  id: string;
+  name: string;
+  query: string;
+  /** Empty means every indexer — the one scope that cannot go stale. */
+  indexers: SavedSearchRef[];
+  categories: number[];
+  minSeeders: number;
+  createdAt: string;
+  updatedAt: string;
+  lastRunAt: string | null;
+}
+
+/** How a saved reference fared against the roster that exists now. */
+export interface ResolvedSearchRef extends SavedSearchRef {
+  /**
+   * The name Prowlarr reports today. Differs from `name` when the indexer was
+   * renamed since the search was saved — which is exactly the case ADR-6 exists
+   * to keep alive, so the new name is shown and the saved one is not corrected.
+   */
+  currentName: string;
+  /** True when only the name matched — the indexer was removed and re-added. */
+  rematchedByName: boolean;
+}
+
+/**
+ * What a saved scope means right now (ADR-6).
+ *
+ * Every field is always present, including on the failure paths. A caller that
+ * could receive results without the unresolved references, or the other way
+ * round, is a caller that will eventually render one without the other.
+ */
+export interface SavedScopeResolution {
+  /**
+   * False when the roster could not be read at all. Nothing may be claimed
+   * missing in that case: an unreachable Prowlarr is not evidence that any
+   * particular indexer is gone.
+   */
+  rosterAvailable: boolean;
+  /** The criteria to actually run, narrowed to references that still exist. */
+  criteria: SearchCriteria;
+  resolved: ResolvedSearchRef[];
+  /** Named with the name they had when saved — there is no other name left. */
+  unresolved: SavedSearchRef[];
+  /**
+   * False when a saved scope resolved to nothing. Never collapses to "all
+   * indexers": a search scoped to two indexers that have both disappeared is
+   * refused, not silently widened to the whole roster (REQ-SEARCH-014).
+   */
+  runnable: boolean;
+}
+
+/**
+ * The re-run response: results and unresolved references in one object, always
+ * both (ADR-6 / T14).
+ *
+ * `search` is null exactly when `resolution.runnable` is false — the case
+ * REQ-SEARCH-014 requires the execute action to be disabled for.
+ */
+export interface SavedSearchRun {
+  resolution: SavedScopeResolution;
+  search: SearchResponse | null;
+}
+
 /**
  * What the destination instance made of a release *name* (ADR-3).
  *

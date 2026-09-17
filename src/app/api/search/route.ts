@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import type { SearchResponse } from '@/lib/types';
 import { requireSession } from '@/server/auth/guard';
-import { runSearch } from '@/server/search/query';
+import { runSearch, toSearchResponse } from '@/server/search/query';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,10 +47,7 @@ export async function POST(request: Request) {
   // forwarded so the indexers stop being queried for a response nobody will
   // read. An abandoned search still costs every tracker a real query.
   const outcome = await runSearch(criteria, request.signal);
-
-  const body: SearchResponse = outcome.available
-    ? { available: true, ...outcome.read }
-    : { ...outcome.outage, available: false };
+  const body: SearchResponse = toSearchResponse(outcome);
 
   return NextResponse.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }

@@ -221,6 +221,54 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    name: 'saved-search',
+    up: (db) => {
+      db.exec(`
+        -- A saved search stores a question, not an answer (ADR-6 / OQ-6).
+        --
+        -- There is deliberately no instance_id and no foreign key to anything:
+        -- a saved search is portable, and tying it to the Prowlarr instance
+        -- that happened to be registered when it was saved would make
+        -- "re-register Prowlarr" delete the operator's whole library of
+        -- searches. What it stores is the criteria shape the search route
+        -- already validates, so re-running is the ordinary search path with a
+        -- resolved scope rather than a second implementation of it.
+        CREATE TABLE saved_search (
+          id           TEXT PRIMARY KEY,
+          name         TEXT NOT NULL,
+          query        TEXT NOT NULL,
+
+          -- JSON [{indexerId, name}] — a *reference* per indexer, never a bare
+          -- id. The id is how it resolves on the happy path; the name is the
+          -- only thing left to say out loud when the id is gone, and
+          -- REQ-SEARCH-014 requires the missing indexer to be named. Empty
+          -- array means "every indexer", which is the one scope that cannot
+          -- go stale.
+          scope_json   TEXT NOT NULL DEFAULT '[]',
+
+          -- Prowlarr's own category ids. Not references: they are a fixed
+          -- vocabulary, not roster entries, so there is nothing to resolve.
+          categories_json TEXT NOT NULL DEFAULT '[]',
+          min_seeders  INTEGER NOT NULL DEFAULT 0,
+
+          created_at   TEXT NOT NULL,
+          updated_at   TEXT NOT NULL,
+          -- Audit only. Nothing reads it to decide anything: a saved search is
+          -- never re-run on a schedule, because every run spends indexer quota
+          -- (REQ-SEARCH-009).
+          last_run_at  TEXT
+        );
+
+        -- Case-insensitively unique, because the delete confirmation has to
+        -- name the search being deleted (REQ-SEARCH-015) and two rows called
+        -- "weekly sweep" make that sentence a guess.
+        CREATE UNIQUE INDEX idx_saved_search_name
+          ON saved_search (name COLLATE NOCASE);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database): number {

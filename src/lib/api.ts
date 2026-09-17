@@ -18,6 +18,9 @@ import type {
   RenamePlanDto,
   RenameScopeEntry,
   RenameTitlesRead,
+  SavedSearchRead,
+  SavedSearchRef,
+  SavedSearchRun,
   SearchAvailability,
   SearchCriteria,
   SearchResponse,
@@ -104,6 +107,22 @@ export interface GrabInput {
   entityRef: string | null;
 }
 
+/**
+ * What the toolbar sends when the operator saves the search in front of them.
+ *
+ * `indexers` carries names as well as ids because the browser is the only place
+ * that knows both: it rendered the chips from the roster. Re-deriving them
+ * server-side later would name whatever holds the id *then*, which is the one
+ * thing a stale-reference message must not do (ADR-6).
+ */
+export interface SavedSearchInput {
+  name: string;
+  query: string;
+  indexers: SavedSearchRef[];
+  categories: number[];
+  minSeeders: number;
+}
+
 export const api = {
   listInstances: () =>
     request<{ instances: InstanceDto[] }>('/api/instances').then((r) => r.instances),
@@ -161,6 +180,37 @@ export const api = {
   // abandoned mid-flight — see the route for why.
   grab: (body: GrabInput) =>
     request<GrabOutcome>('/api/grab', { method: 'POST', body: JSON.stringify(body) }),
+
+  /* ── Saved searches ────────────────────────────────────────────────────── */
+
+  // Local SQLite, so this one is free to read and keeps answering while
+  // Prowlarr is down — which is the whole point of REQ-SEARCH-013.
+  savedSearches: (signal?: AbortSignal) =>
+    request<{ searches: SavedSearchRead[] }>('/api/searches', { signal })
+      .then((r) => r.searches),
+
+  saveSearch: (body: SavedSearchInput) =>
+    request<{ search: SavedSearchRead }>('/api/searches', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then((r) => r.search),
+
+  renameSavedSearch: (id: string, name: string) =>
+    request<{ search: SavedSearchRead }>(`/api/searches/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }).then((r) => r.search),
+
+  deleteSavedSearch: (id: string) =>
+    request<void>(`/api/searches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // The only saved-search call that reaches an indexer, which is why it is a
+  // POST to its own path and never fires on selection (REQ-SEARCH-012).
+  runSavedSearch: (id: string, signal?: AbortSignal) =>
+    request<SavedSearchRun>(`/api/searches/${encodeURIComponent(id)}/run`, {
+      method: 'POST',
+      signal,
+    }),
 
   /* ── Library gaps and manual attach ────────────────────────────────────── */
 

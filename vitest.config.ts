@@ -39,6 +39,7 @@ export default defineConfig({
           '**/search-grab.test.ts',
           '**/search-interaction.test.ts',
           '**/search-perf.test.ts',
+          '**/saved-search-interaction.test.ts',
           '**/gaps-interaction.test.ts',
           '**/gaps-perf.test.ts',
           '**/rename-interaction.test.ts',

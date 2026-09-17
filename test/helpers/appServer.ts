@@ -16,6 +16,8 @@ import type { Page } from 'playwright';
 
 export interface AppServer {
   origin: string;
+  /** The data directory this server booted against — pass it back to restart. */
+  dataDir: string;
   close: () => Promise<void>;
 }
 
@@ -24,9 +26,18 @@ export async function startApp(options: {
   password: string;
   /** Extra environment for the server process, e.g. the refresh interval. */
   env?: Record<string, string>;
+  /**
+   * An existing data directory to boot against, kept when the server closes.
+   *
+   * For the suites that assert something survives a restart: without it every
+   * `startApp` gets a fresh database, and "it is still there afterwards" would
+   * be a claim about a file that was never the same file.
+   */
+  dataDir?: string;
 }): Promise<AppServer> {
   const origin = `http://127.0.0.1:${options.port}`;
-  const dir = mkdtempSync(join(tmpdir(), 'helparr-e2e-'));
+  const dir = options.dataDir ?? mkdtempSync(join(tmpdir(), 'helparr-e2e-'));
+  const ownsDir = options.dataDir === undefined;
 
   const server: ChildProcess = spawn(process.execPath, ['.next/standalone/server.js'], {
     cwd: process.cwd(),
@@ -54,17 +65,29 @@ export async function startApp(options: {
     }
     if (Date.now() > deadline) {
       server.kill();
-      rmSync(dir, { recursive: true, force: true });
+      if (ownsDir) rmSync(dir, { recursive: true, force: true });
       throw new Error(`Standalone server never became ready on ${origin}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
+  const exited = new Promise<void>((resolve) => { server.once('exit', () => resolve()); });
+
   return {
     origin,
+    dataDir: dir,
     close: async () => {
       server.kill();
-      rmSync(dir, { recursive: true, force: true });
+      // Awaited, not slept on. A successor booting on this port while the old
+      // process is still listening finds the port taken and dies, and the
+      // readiness probe then happily succeeds against the corpse — which is
+      // indistinguishable from a healthy restart until the first request lands
+      // on the process that was supposed to have replaced it.
+      await Promise.race([
+        exited,
+        new Promise((resolve) => { setTimeout(resolve, 10_000).unref(); }),
+      ]);
+      if (ownsDir) rmSync(dir, { recursive: true, force: true });
     },
   };
 }

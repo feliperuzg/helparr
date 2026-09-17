@@ -1,13 +1,17 @@
 import 'server-only';
 
+import { resolveSavedScope, unresolvableScope } from '@/lib/savedSearch';
 import { SEARCH_RESULT_CAP } from '@/lib/types';
 import type {
   IndexerError,
   IndexerRead,
   ReleaseRead,
+  SavedSearchRead,
+  SavedSearchRun,
   SearchAvailability,
   SearchCriteria,
   SearchRead,
+  SearchResponse,
 } from '@/lib/types';
 import {
   countsAsBreakerFailure,
@@ -348,4 +352,62 @@ export async function runSearch(
       truncated,
     },
   };
+}
+
+/**
+ * The wire shape of a search outcome — always a 200 body, never a status code
+ * (ADR-9).
+ *
+ * Shared by the search route and the saved-search re-run so a saved search
+ * cannot end up with a second, subtly different rendering of the same outage.
+ */
+export function toSearchResponse(outcome: SearchOutcome): SearchResponse {
+  return outcome.available
+    ? { available: true, ...outcome.read }
+    : { ...outcome.outage, available: false };
+}
+
+/**
+ * Re-running a saved search (FR11, FR12; REQ-SEARCH-012, -014; ADR-6).
+ *
+ * The scope is resolved against the roster that exists *now*, never against the
+ * ids frozen at save time, and the result carries both halves: what came back
+ * and what could not be found. There is no branch below that returns one
+ * without the other.
+ *
+ * The refusal in the middle is the important one. A saved search scoped to two
+ * indexers that have both disappeared must not fall through to an empty
+ * `indexerIds`, because the search route reads empty as *every* indexer — the
+ * operator would get a roster-wide search they never asked for, under the name
+ * of a narrow one they did.
+ */
+export async function runSavedSearch(
+  saved: SavedSearchRead,
+  signal?: AbortSignal,
+): Promise<SavedSearchRun> {
+  if (saved.indexers.length === 0) {
+    // Nothing to resolve, so nothing to read the roster for here: `runSearch`
+    // reads it itself to expand `All`, and doing it twice would cost Prowlarr a
+    // request that answers a question already answered. `rosterAvailable` is
+    // true because the claim it backs — "no reference is missing" — is one an
+    // empty scope satisfies without consulting anything.
+    const resolution = resolveSavedScope(saved, []);
+    return { resolution, search: toSearchResponse(await runSearch(resolution.criteria, signal)) };
+  }
+
+  const availability = await listIndexers(signal);
+  if (!availability.available) {
+    // Prowlarr is down. The outage travels in `search` exactly as it does for
+    // an ordinary search, and the resolution claims nothing missing — see
+    // `unresolvableScope`.
+    return {
+      resolution: unresolvableScope(saved),
+      search: { ...availability, available: false },
+    };
+  }
+
+  const resolution = resolveSavedScope(saved, availability.indexers);
+  if (!resolution.runnable) return { resolution, search: null };
+
+  return { resolution, search: toSearchResponse(await runSearch(resolution.criteria, signal)) };
 }
