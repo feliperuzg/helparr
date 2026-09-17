@@ -39,9 +39,14 @@
  *
  * Usage:
  *
- *   SONARR_URL=http://10.0.0.5:8989 SONARR_API_KEY=… \
- *   RADARR_URL=http://10.0.0.5:7878 RADARR_API_KEY=… \
- *     npm run spike:rename
+ *   npm run spike:rename
+ *
+ * Credentials come from `~/.helparr-verify.env` — the same file the other
+ * spikes use, kept outside the repo on purpose. Point `SPIKE_ENV_FILE`
+ * elsewhere to use a different one. Anything already exported in the shell
+ * wins over the file, so a single instance can still be overridden inline:
+ *
+ *   SONARR_URL=http://10.0.0.5:8989 npm run spike:rename
  *
  * RADARR_* is optional but leaves the movie half of FR1/FR2 unmeasured.
  * SPIKE_TITLE_SAMPLE overrides how many titles get a preview read
@@ -51,7 +56,48 @@
  * unreachable host).
  */
 
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+
 const env = (name) => process.env[name]?.trim() || null;
+
+const ENV_FILE = resolve(process.env.SPIKE_ENV_FILE?.trim() || `${homedir()}/.helparr-verify.env`);
+
+/**
+ * Load the out-of-repo credentials file.
+ *
+ * An already-exported variable wins, so the file is a default rather than an
+ * override — that keeps `SONARR_URL=… npm run spike:rename` working for a
+ * one-off against a different host. Returns the key names it supplied, never
+ * the values: this function's whole job is handling secrets, and the caller
+ * only ever prints the names.
+ */
+function loadEnvFile(path) {
+  let contents;
+  try {
+    contents = readFileSync(path, 'utf8');
+  } catch (error) {
+    return { found: false, reason: error?.code === 'ENOENT' ? 'not found' : String(error?.message ?? error) };
+  }
+
+  const applied = [];
+  for (const line of contents.split('\n')) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!match) continue; // blank lines and `#` comments
+
+    const [, key, rawValue] = match;
+    const value = rawValue.trim().replace(/^(['"])(.*)\1$/, '$2');
+    if (value === '') continue;
+    if (process.env[key]?.trim()) continue; // the shell already set it
+
+    process.env[key] = value;
+    applied.push(key);
+  }
+  return { found: true, applied };
+}
+
+const envFile = loadEnvFile(ENV_FILE);
 
 const TITLE_SAMPLE = Number(env('SPIKE_TITLE_SAMPLE') ?? 25);
 
@@ -342,12 +388,24 @@ async function main() {
   if (!sonarrUrl || !sonarrKey) {
     console.error('SONARR_URL and SONARR_API_KEY are required.');
     console.error('');
-    console.error('  SONARR_URL=http://host:8989 SONARR_API_KEY=… npm run spike:rename');
+    console.error(
+      envFile.found
+        ? `  ${ENV_FILE} was read but does not set them.`
+        : `  ${ENV_FILE} — ${envFile.reason}.`,
+    );
+    console.error('');
+    console.error('  Put them in that file, or pass them inline:');
+    console.error('    SONARR_URL=http://host:8989 SONARR_API_KEY=… npm run spike:rename');
     process.exit(2);
   }
 
   console.log('');
   console.log('bulk-rename-preview spike — READ-ONLY (GETs only, no command is ever posted)');
+  console.log(
+    envFile.found
+      ? `env file: ${ENV_FILE} → ${envFile.applied.length ? envFile.applied.join(', ') : 'nothing new (shell already set everything)'}`
+      : `env file: ${ENV_FILE} — ${envFile.reason}; using the shell environment`,
+  );
   console.log(`title sample: ${TITLE_SAMPLE} per instance`);
 
   const results = {};
