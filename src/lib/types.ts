@@ -331,7 +331,14 @@ export type SearchResponse =
   | ({ available: true } & SearchRead)
   | ({ available: false } & SearchAvailability);
 
-/** What the destination instance made of a release *name* (ADR-3). */
+/**
+ * What the destination instance made of a release *name* (ADR-3).
+ *
+ * The four season fields are Sonarr's own reading of the name, carried through
+ * verbatim: helparr never restates the episode set it would import. On Radarr
+ * they are inert — a film has no season — and the season-scoped attach is
+ * refused there before a parse is ever asked for.
+ */
 export interface ParsedTarget {
   resolved: boolean;
   seriesId: number | null;
@@ -339,6 +346,18 @@ export interface ParsedTarget {
   label: string | null;
   quality: string | null;
   releaseGroup: string | null;
+  /** The season the instance read out of the name; null when it read none. */
+  seasonNumber: number | null;
+  /** The instance's own `fullSeason` flag — a season pack, by its reading. */
+  fullSeason: boolean;
+  /**
+   * The name spans more than one season. Only the first is ever resolved, and
+   * the same torrent cannot be pushed twice, so this is disclosed and never
+   * acted on (FR6).
+   */
+  isMultiSeason: boolean;
+  /** How many episodes the instance resolved. Never helparr's own count. */
+  episodeCount: number;
 }
 
 export interface EvaluatedRelease {
@@ -433,6 +452,13 @@ export interface Gap {
   upstreamId: number;
   /** Sonarr only. The join key into the series cache; null on a movie. */
   seriesId: number | null;
+  /**
+   * Sonarr only; null on a movie. Kept from upstream rather than re-parsed out
+   * of `itemCode`, so the season chooser lists Sonarr's own numbering — season
+   * 0 is specials and is a real season, which a regex over `S00E01` would have
+   * to be told about.
+   */
+  seasonNumber: number | null;
   /** The series title, or the literal `Films` for every Radarr gap (FR5). */
   groupTitle: string;
   /** `S04E02` on an episode, the release year on a movie. */
@@ -476,6 +502,32 @@ export interface SeriesSummary {
   qualityProfileId: number | null;
 }
 
+/**
+ * One season's counts, as Sonarr reports them in `seasons[].statistics`.
+ *
+ * Both numbers are upstream's. helparr never derives "already filed" by
+ * subtracting its own gap count: an unmonitored episode with no file is not a
+ * gap, so that subtraction reports it as filed — wrong in the one direction a
+ * pre-write warning cannot afford (ADR-4).
+ */
+export interface SeasonStatistic {
+  seasonNumber: number;
+  episodeCount: number;
+  episodeFileCount: number;
+}
+
+/**
+ * `GET /api/v3/series/{id}`, reduced. Read on demand when a season-attach
+ * confirmation opens — never cached, because `episodeFileCount` is exactly what
+ * changes inside the series cache's ten-minute window (ADR-4).
+ */
+export interface SeriesDetail {
+  id: number;
+  title: string;
+  path: string;
+  seasons: SeasonStatistic[];
+}
+
 /** One row of `GET /api/v3/history` for a single item, as returned. */
 export interface HistoryEvent {
   at: string;
@@ -503,6 +555,29 @@ export interface AttachPreview {
   matchesGap: boolean;
   /** Where the instance would file it, from the gap's own record. */
   path: string | null;
+}
+
+/**
+ * The season-scoped sibling of `AttachPreview` (FR4..FR6).
+ *
+ * Two independent reads feed it — the parse and the one-series detail — and
+ * either can fail without the other. Both counts are therefore nullable, and
+ * null means *absent*: the confirmation renders nothing rather than `0`, which
+ * would read as "no episode of this season has a file".
+ */
+export interface SeasonAttachPreview {
+  /** The name helparr will push — a season token, no episode token. */
+  title: string;
+  target: ParsedTarget;
+  /** False when the instance resolved another series, or another season. */
+  matchesSeason: boolean;
+  path: string | null;
+  /** The season the operator chose. Named back so the dialog cannot drift. */
+  season: number;
+  /** `seasons[].statistics.episodeCount` — Sonarr's count, or absent. */
+  seasonEpisodeCount: number | null;
+  /** `seasons[].statistics.episodeFileCount` — how many already have a file. */
+  seasonFileCount: number | null;
 }
 
 export interface BulkSearchOutcome {

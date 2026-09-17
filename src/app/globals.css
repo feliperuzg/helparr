@@ -1191,6 +1191,35 @@ select.input {
   color: var(--color-text-subtle);
 }
 
+/* A heading carrying the season button is taller than an inert one, and the
+   number comes from GapsGrid rather than from here — the virtualizer positions
+   the next row using that same number, so a second definition that disagreed
+   would overlap the rows below it. */
+.ggrid__group--action { height: var(--group-action-height); }
+.ggrid__group-action {
+  flex: none;
+  margin-left: var(--space-3);
+  /* The cell aligns text on its baseline; a button has no business on it. */
+  align-self: center;
+}
+
+/* Stacked — see STACK_QUERY in GapsGrid.tsx, which this must stay equal to.
+   Below 768px there is no room beside the instance label; on a coarse pointer
+   `.btn-sm` is already 44px and will not fit a 30px heading either. */
+@media (max-width: 767px), (pointer: coarse) {
+  .ggrid__group--action .ggrid__group-cell {
+    flex-wrap: wrap;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+    gap: var(--space-2) var(--space-3);
+  }
+  .ggrid__group--action .ggrid__group-action {
+    width: 100%;
+    margin-left: 0;
+    min-height: 44px;
+  }
+}
+
 .ggrid__cell {
   padding: 0 var(--space-2);
   min-width: 0;
@@ -1537,6 +1566,48 @@ select.input {
 
 .grab-resolve { margin: var(--space-4) 0; display: grid; gap: var(--space-2); }
 .grab-target { padding: var(--space-3); background: var(--color-surface-sunken); }
+
+/* The season chooser — a radio group, and a real `fieldset` so the legend is
+   the group's name rather than a paragraph that happens to sit above it. */
+.season-pick {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+.season-pick legend {
+  padding: 0 var(--space-2);
+  font-size: 11px; font-weight: 600;
+  color: var(--color-text-muted);
+}
+.season-pick__option {
+  display: flex; align-items: center; gap: var(--space-3);
+  /* A whole-row target, because the 13px radio alone is not one. */
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+}
+.season-pick__option:hover { background: var(--color-primary-subtle); }
+.season-pick__option:has(input:focus-visible) {
+  outline: 2px solid var(--color-ring); outline-offset: 2px;
+}
+/* The count is the secondary fact, so it goes to the far edge and stays quiet. */
+.season-pick__option .subtle { margin-left: auto; font-size: 11px; }
+
+/* Collapsed after the choice: the season stays visible next to the resolved
+   counts without the chooser occupying the dialog. */
+.season-pick__chosen {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  font-size: 13px; font-weight: 600;
+}
+.season-pick__chosen .btn { margin-left: auto; }
+
+@media (pointer: coarse) {
+  .season-pick__option { min-height: 44px; }
+}
 
 /* =========================================================================
    RENAME DIFF

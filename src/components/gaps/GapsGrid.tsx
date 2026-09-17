@@ -35,25 +35,67 @@ const HEADER_HEIGHT = 30;
 const TOUCH_ROW_HEIGHT = 48;
 const TOUCH_HEADER_HEIGHT = 36;
 const TOUCH_QUERY = '(max-width: 767px)';
+/**
+ * When the season button stacks onto its own line — and it is deliberately the
+ * *union* of the two conditions that make it necessary, not one of them. A
+ * narrow window needs the stack for width; a coarse pointer needs it for the
+ * 44px target `globals.css` already gives `.btn-sm` there (NFR7). A tablet is
+ * wide and coarse; a narrow desktop window is the reverse. Either alone is
+ * enough to make a 30px header too short for the control inside it.
+ */
+const STACK_QUERY = '(max-width: 767px), (pointer: coarse)';
+/** Title line, then a 44px button, plus the cell's own vertical padding. */
+const STACKED_HEADER_HEIGHT = 88;
 const OVERSCAN = 12;
 
 /** Subscribed, not measured — a rotation must re-lay the grid out. */
-function useTouchRows(): boolean {
+function useMediaMatch(query: string): boolean {
   const subscribe = useCallback((onChange: () => void) => {
-    const mql = window.matchMedia(TOUCH_QUERY);
+    const mql = window.matchMedia(query);
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);
-  }, []);
+  }, [query]);
 
   return useSyncExternalStore(
     subscribe,
-    () => window.matchMedia(TOUCH_QUERY).matches,
+    () => window.matchMedia(query).matches,
     () => false,
   );
 }
 
+/**
+ * One season the group is missing something from, and how much.
+ *
+ * `missing` is helparr's own row count — how many gaps are listed under this
+ * heading for that season — and nothing more. It is not "N of M": the total
+ * episode count belongs to Sonarr and arrives with the pre-flight, so claiming a
+ * denominator here would be inventing one.
+ */
+export interface SeasonTally {
+  season: number;
+  missing: number;
+}
+
+type HeaderRow = {
+  type: 'header';
+  key: string;
+  groupTitle: string;
+  instanceLabel: string;
+  /** Radarr headers carry no season action — a film has no season (NFR4). */
+  instanceKind: Gap['instanceKind'];
+  count: number;
+  /**
+   * Any gap in the group, used as the group's handle: the season attach is
+   * addressed by gap id, and every gap here names the same series on the same
+   * instance. The first one is as good as the last.
+   */
+  anchor: Gap;
+  /** The seasons this group is actually missing something from, ascending. */
+  seasons: SeasonTally[];
+};
+
 type RenderRow =
-  | { type: 'header'; key: string; groupTitle: string; instanceLabel: string; count: number }
+  | HeaderRow
   | { type: 'gap'; key: string; gap: Gap; flatIndex: number };
 
 /**
@@ -69,7 +111,7 @@ type RenderRow =
 export function buildRenderRows(gaps: Gap[]): RenderRow[] {
   const rows: RenderRow[] = [];
   let groupKey: string | null = null;
-  let header: Extract<RenderRow, { type: 'header' }> | null = null;
+  let header: HeaderRow | null = null;
 
   gaps.forEach((gap, flatIndex) => {
     const key = `${gap.instanceId}:${gap.groupTitle}`;
@@ -80,17 +122,46 @@ export function buildRenderRows(gaps: Gap[]): RenderRow[] {
         key: `hdr:${key}:${gap.id}`,
         groupTitle: gap.groupTitle,
         instanceLabel: gap.instanceLabel,
+        instanceKind: gap.instanceKind,
         count: 0,
+        anchor: gap,
+        seasons: [],
       };
       rows.push(header);
     }
     // Counted as the group is built rather than by a second grouping pass, so
     // the number in the heading cannot disagree with the rows beneath it.
-    if (header) header.count += 1;
+    if (header) {
+      header.count += 1;
+      // The chooser offers the seasons the operator can see are missing
+      // something, and only those. A season Sonarr never reported a number for
+      // is left out rather than guessed at from the item code.
+      if (gap.seasonNumber !== null) {
+        const tally = header.seasons.find((entry) => entry.season === gap.seasonNumber);
+        if (tally) tally.missing += 1;
+        else header.seasons.push({ season: gap.seasonNumber, missing: 1 });
+      }
+    }
     rows.push({ type: 'gap', key: gap.id, gap, flatIndex });
   });
 
+  // Sorted rather than trusted: the list arrives ordered by season already, but
+  // the chooser's order is a promise to the operator and the grouping pass makes
+  // no such guarantee.
+  rows.forEach((row) => {
+    if (row.type === 'header') row.seasons.sort((a, b) => a.season - b.season);
+  });
+
   return rows;
+}
+
+/**
+ * Does this heading get the season button? Sonarr only (NFR4), and only when
+ * there is a season to offer — a group whose gaps carry no season number has
+ * nothing to put in the chooser.
+ */
+export function hasSeasonAction(row: HeaderRow): boolean {
+  return row.instanceKind === 'sonarr' && row.seasons.length > 0;
 }
 
 interface Column {
@@ -126,6 +197,11 @@ export interface GapsGridProps {
   onToggleSelect: (id: string) => void;
   /** Selects or clears every gap currently listed — never the unfiltered set. */
   onToggleAll: () => void;
+  /**
+   * Opens the season confirmation for a series group (ADR-6). Omitted, the
+   * heading is the inert label it has always been.
+   */
+  onAttachSeason?: (anchor: Gap, seasons: SeasonTally[]) => void;
   loading?: boolean;
 }
 
@@ -138,13 +214,20 @@ export default function GapsGrid({
   selected,
   onToggleSelect,
   onToggleAll,
+  onAttachSeason,
   loading = false,
 }: GapsGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const touch = useTouchRows();
+  const touch = useMediaMatch(TOUCH_QUERY);
+  const stacked = useMediaMatch(STACK_QUERY);
   const rowHeight = touch ? TOUCH_ROW_HEIGHT : ROW_HEIGHT;
   const headerHeight = touch ? TOUCH_HEADER_HEIGHT : HEADER_HEIGHT;
+  // Only the headings that actually carry a button grow. A Radarr group in the
+  // same list keeps the height it had (NFR4).
+  const actionHeaderHeight = onAttachSeason !== undefined && stacked
+    ? STACKED_HEADER_HEIGHT
+    : headerHeight;
 
   const rows = useMemo(() => buildRenderRows(gaps), [gaps]);
 
@@ -172,8 +255,12 @@ export default function GapsGrid({
   }, []);
 
   const estimateSize = useCallback(
-    (index: number) => (rows[index]?.type === 'header' ? headerHeight : rowHeight),
-    [rows, headerHeight, rowHeight],
+    (index: number) => {
+      const row = rows[index];
+      if (row?.type !== 'header') return rowHeight;
+      return hasSeasonAction(row) ? actionHeaderHeight : headerHeight;
+    },
+    [rows, headerHeight, actionHeaderHeight, rowHeight],
   );
 
   const virtualizer = useVirtualizer({
@@ -203,8 +290,9 @@ export default function GapsGrid({
       overflow: 'hidden',
       '--row-height': `${rowHeight}px`,
       '--group-height': `${headerHeight}px`,
+      '--group-action-height': `${actionHeaderHeight}px`,
     } as CSSProperties),
-    [rowHeight, headerHeight],
+    [rowHeight, headerHeight, actionHeaderHeight],
   );
 
   const allSelected = gaps.length > 0 && gaps.every((gap) => selected.has(gap.id));
@@ -283,11 +371,10 @@ export default function GapsGrid({
                 return (
                   <GroupHeader
                     key={row.key}
-                    title={row.groupTitle}
-                    instanceLabel={row.instanceLabel}
-                    count={row.count}
+                    row={row}
                     renderIndex={item.index}
                     offset={item.start}
+                    onAttachSeason={onAttachSeason}
                   />
                 );
               }
@@ -317,36 +404,63 @@ export default function GapsGrid({
 const SKELETON_ROWS = ['62%', '48%', '71%', '39%', '56%', '44%', '66%', '51%'];
 
 /**
- * Presentational, and deliberately inert: no `tabindex`, no click handler, no
- * `gridcell` the cursor can reach. It is a `row` so the grid's row count stays
- * truthful about what is on screen, and nothing more (REQ-GAPS-005).
+ * Still not a cursor stop (REQ-GAPS-005, ADR-6). The heading has one focusable
+ * control now, and that is the whole extent of the change: no `tabindex` on the
+ * row, no click handler on the row, nothing `j`/`k` can land on. The button is
+ * reached by `Tab` like any other control, which is why no key had to be bound
+ * in `useListKeyboard` — a binding there would exist on Queue, Search and
+ * Activity too.
  */
 function GroupHeader({
-  title,
-  instanceLabel,
-  count,
+  row,
   renderIndex,
   offset,
+  onAttachSeason,
 }: {
-  title: string;
-  instanceLabel: string;
-  count: number;
+  row: HeaderRow;
   renderIndex: number;
   offset: number;
+  onAttachSeason?: (anchor: Gap, seasons: SeasonTally[]) => void;
 }) {
+  const action = onAttachSeason !== undefined && hasSeasonAction(row);
+
   return (
     <div
       role="row"
       aria-rowindex={renderIndex + 2}
-      className="ggrid__row ggrid__group"
+      className={`ggrid__row ggrid__group${action ? ' ggrid__group--action' : ''}`}
       style={{ transform: `translateY(${offset}px)` }}
     >
       <span role="gridcell" className="ggrid__cell ggrid__group-cell">
-        <span className="ggrid__group-title">{title}</span>
+        <span className="ggrid__group-title">{row.groupTitle}</span>
         <span className="ggrid__group-meta">
-          {count} missing
+          {row.count} missing
         </span>
-        <span className="ggrid__group-instance">{instanceLabel}</span>
+        <span className="ggrid__group-instance">{row.instanceLabel}</span>
+        {action ? (
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm ggrid__group-action"
+            // Named, because a list of these reads as a column of identical
+            // buttons otherwise — and the series is the only thing that tells
+            // one from the next.
+            aria-label={`Attach a season pack to ${row.groupTitle}`}
+            // `useListKeyboard` is bound to the window and `preventDefault`s
+            // Enter and Space — it has to be, or `j`/`k`/Space would go inert
+            // the moment focus left the grid. A button *inside* the grid is the
+            // one place that costs something: the layer would swallow the two
+            // keys that press it and leave this mouse-only. Stopped here rather
+            // than excluded there, because the chips outside the grid keep
+            // their current behaviour — Space after clicking one still selects
+            // rows (NFR7).
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+            }}
+            onClick={() => onAttachSeason(row.anchor, row.seasons)}
+          >
+            Attach season pack
+          </button>
+        ) : null}
       </span>
     </div>
   );

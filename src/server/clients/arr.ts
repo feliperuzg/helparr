@@ -6,6 +6,8 @@ import type {
   InstanceKind,
   ParsedTarget,
   RemovalRequest,
+  SeasonStatistic,
+  SeriesDetail,
   SeriesSummary,
   StatusMessage,
 } from '@/lib/types';
@@ -502,6 +504,49 @@ export class ArrClient extends BaseArrClient implements ArrQueueClient, ReleaseC
     return { ok: true, value: body.value.map(toSeriesSummary) };
   }
 
+  /**
+   * One series, with the `seasons[].statistics` `series()` throws away.
+   *
+   * Deliberately not cached and deliberately not folded into the library read:
+   * the number it exists to produce — how many episodes of this season already
+   * have a file — is precisely what changes inside the cache's ten-minute
+   * window, and it is stated in a dialog that is about to write (ADR-4).
+   */
+  async seriesDetail(id: number, signal?: AbortSignal): Promise<ClientResult<SeriesDetail>> {
+    const context = 'sonarr series detail';
+    if (this.kind !== 'sonarr') {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: 'Only Sonarr has seasons.' },
+      };
+    }
+
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url(`/series/${id}`),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    const raw = body.value as Record<string, unknown> | null;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a series.` },
+      };
+    }
+
+    return { ok: true, value: toSeriesDetail(raw) };
+  }
+
   async qualityProfiles(signal?: AbortSignal): Promise<ClientResult<QualityProfileSummary[]>> {
     const context = `${this.kind} quality profiles`;
     const combined = this.withTimeout(signal);
@@ -645,6 +690,15 @@ function asNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function asNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** Strict: a missing flag is false, never truthy-by-coercion. */
+function asBool(value: unknown): boolean {
+  return value === true;
+}
+
 function parseStatusMessages(raw: unknown): StatusMessage[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -744,12 +798,18 @@ export function toParsedTarget(input: unknown, kind: InstanceKind): ParsedTarget
       label: movie ? movieLabel({ movie }) : null,
       quality: qualityName(info),
       releaseGroup: asStringOrNull(info?.releaseGroup),
+      // A film has no season. Inert, so the shared type stays one type.
+      seasonNumber: null,
+      fullSeason: false,
+      isMultiSeason: false,
+      episodeCount: 0,
     };
   }
 
   const series = raw.series as Record<string, unknown> | null | undefined;
   const info = (raw.parsedEpisodeInfo ?? null) as Record<string, unknown> | null;
   const seriesId = typeof series?.id === 'number' ? series.id : null;
+  const episodes = Array.isArray(raw.episodes) ? raw.episodes : [];
   return {
     resolved: seriesId !== null,
     seriesId,
@@ -757,6 +817,12 @@ export function toParsedTarget(input: unknown, kind: InstanceKind): ParsedTarget
     label: series ? episodeLabel({ series, episodes: raw.episodes }) : null,
     quality: qualityName(info),
     releaseGroup: asStringOrNull(info?.releaseGroup),
+    // Sonarr's reading of the name, carried through. `episodeCount` is the
+    // length of what it resolved — helparr never asserts the set itself (FR2).
+    seasonNumber: asNumberOrNull(info?.seasonNumber),
+    fullSeason: asBool(info?.fullSeason),
+    isMultiSeason: asBool(info?.isMultiSeason),
+    episodeCount: episodes.length,
   };
 }
 
@@ -811,6 +877,7 @@ export function toGapRecord(input: unknown, kind: InstanceKind): ArrGapRecord {
       kind: 'movie',
       upstreamId: asNumber(raw.id, -1),
       seriesId: null,
+      seasonNumber: null,
       itemCode: year > 0 ? String(year) : '—',
       title: asString(raw.title, 'Untitled'),
       airDate: earliestReleaseDate(raw),
@@ -834,6 +901,9 @@ export function toGapRecord(input: unknown, kind: InstanceKind): ArrGapRecord {
     kind: 'episode',
     upstreamId: asNumber(raw.id, -1),
     seriesId: typeof raw.seriesId === 'number' ? raw.seriesId : null,
+    // Kept, not re-derived from `itemCode`: the same number the season attach
+    // will name to Sonarr, from Sonarr.
+    seasonNumber: season >= 0 ? season : null,
     itemCode: season >= 0 && number >= 0 ? `S${pad(season)}E${pad(number)}` : '—',
     title: asString(raw.title, 'Untitled'),
     airDate: asStringOrNull(raw.airDateUtc) ?? asStringOrNull(raw.airDate),
@@ -862,6 +932,36 @@ export function toSeriesSummary(input: unknown): SeriesSummary {
     // the belt-and-braces guard downstream throw the whole list away.
     monitored: raw.monitored !== false,
     qualityProfileId: typeof raw.qualityProfileId === 'number' ? raw.qualityProfileId : null,
+  };
+}
+
+/**
+ * The season counts, and nothing else the series object carries.
+ *
+ * A season whose `statistics` block is missing is **dropped**, not defaulted to
+ * zero: the confirmation renders an absent count as absent, and a fabricated
+ * `0 of 0` would read as "nothing is filed here" — a claim helparr would be
+ * making on Sonarr's behalf.
+ */
+export function toSeriesDetail(input: unknown): SeriesDetail {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const seasons = Array.isArray(raw.seasons) ? raw.seasons : [];
+
+  return {
+    id: asNumber(raw.id, -1),
+    title: asString(raw.title, 'Untitled series'),
+    path: asString(raw.path),
+    seasons: seasons
+      .map((entry): SeasonStatistic | null => {
+        const season = (entry ?? {}) as Record<string, unknown>;
+        const number = asNumberOrNull(season.seasonNumber);
+        const stats = (season.statistics ?? null) as Record<string, unknown> | null;
+        const episodeCount = asNumberOrNull(stats?.episodeCount);
+        const episodeFileCount = asNumberOrNull(stats?.episodeFileCount);
+        if (number === null || episodeCount === null || episodeFileCount === null) return null;
+        return { seasonNumber: number, episodeCount, episodeFileCount };
+      })
+      .filter((season): season is SeasonStatistic => season !== null),
   };
 }
 

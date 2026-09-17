@@ -18,6 +18,7 @@ import type {
   SearchAvailability,
   SearchCriteria,
   SearchResponse,
+  SeasonAttachPreview,
   TestOutcome,
 } from './types';
 
@@ -185,9 +186,23 @@ export const api = {
       signal,
     }),
 
+  // The season-scoped pre-flight. Same route, same read-only guarantee; the
+  // `season` in the body is what switches the scope (ADR-7).
+  resolveSeason: (gapId: string, season: number, signal?: AbortSignal) =>
+    request<SeasonAttachPreview>('/api/gaps/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ gapId, season }),
+      signal,
+    }),
+
   // No `signal`, as with `grab` — the push may already have been accepted.
   // Only the gap id travels: the title is re-synthesized server-side.
   attachGap: (body: { gapId: string; link: string }) =>
+    request<GrabOutcome>('/api/gaps/attach', { method: 'POST', body: JSON.stringify(body) }),
+
+  // The season write. The number says which season; the name it is pushed under
+  // is still the server's to decide (NFR3).
+  attachSeason: (body: { gapId: string; season: number; link: string }) =>
     request<GrabOutcome>('/api/gaps/attach', { method: 'POST', body: JSON.stringify(body) }),
 
   // Never called on render or on a selection change. This spends indexer quota,

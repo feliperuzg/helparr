@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { login, seedInstance, startApp, type AppServer } from './helpers/appServer';
 import {
-  fakeQueue, parsedSeries, startFakeArr, type FakeArr, type FakeGapRecord,
+  fakeQueue, parsedSeason, parsedSeries, startFakeArr, type FakeArr, type FakeGapRecord,
 } from './helpers/fakeArr';
 import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fakeProwlarr';
 
@@ -27,6 +27,11 @@ import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fa
  * state — plus the two properties specific to a grid whose rows are interleaved
  * with headings: it is still one tab stop, and its row indices count the
  * headings they render, at any scroll position.
+ *
+ * T13 / AC10 adds the season attach: the button that lives in a group heading,
+ * the radio-group season chooser it opens on, and the confirmation behind that
+ * — three surfaces a rule engine can check, plus the one it cannot, which is
+ * that a heading button is operable from the keyboard at all.
  *
  * This drives the real standalone build in a real browser rather than rendering
  * components under jsdom. NFR7's requirements are mostly *rendered* properties
@@ -62,11 +67,18 @@ const GAP_SERIES = [
 ];
 const PER_SERIES = 100;
 const GAP_COUNT = GAP_SERIES.length * PER_SERIES;
+/**
+ * The first series spans two seasons so its heading carries a season chooser
+ * with a choice in it (T24 / AC10). A group missing episodes from one season
+ * preselects that season and never renders the radio group — which would leave
+ * the chooser unscanned.
+ */
+const SPLIT_SEASON_AT = PER_SERIES / 2;
 const WANTED: FakeGapRecord[] = GAP_SERIES.flatMap((series, s) => (
   Array.from({ length: PER_SERIES }, (_, e) => ({
     id: s * PER_SERIES + e + 1,
     seriesId: series.id,
-    seasonNumber: 1,
+    seasonNumber: series.id === 1 && e >= SPLIT_SEASON_AT ? 2 : 1,
     episodeNumber: e + 1,
     title: `Episode ${e + 1}`,
     airDateUtc: '2025-01-01T00:00:00Z',
@@ -165,6 +177,20 @@ async function openAttachDialog(code: string) {
   // waiting on it would hang exactly where the disagreement is being scanned.
   await page.waitForSelector('text=sending as');
   await page.fill('#attach-link', MAGNET);
+}
+
+/**
+ * Group heading → season confirmation, on the series named `title`.
+ *
+ * Opened from the keyboard rather than with a click: the button sits inside a
+ * `role="row"` that is deliberately not a tab stop, and "the heading is not
+ * focusable but the control in it is" is the whole property — a click would
+ * pass on a button no keyboard user can reach.
+ */
+async function openSeasonAttachDialog(title: string) {
+  await page.focus(`.ggrid__group-action[aria-label="Attach a season pack to ${title}"]`);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.modal[role="dialog"]');
 }
 
 /**
@@ -669,6 +695,37 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     await scan('Gaps (attach confirmation, mismatch)');
     await page.keyboard.press('Escape');
     await expect.poll(() => page.locator('.modal[role="dialog"]').count()).toBe(0);
+  });
+
+  it('Library Gaps has zero violations with the season chooser and the season confirmation open', async () => {
+    // A season-scoped answer, so the confirmation settles into its resolved
+    // branch rather than being scanned mid-pre-flight.
+    sonarr.setParse(parsedSeason({
+      id: 1, title: 'Reacher', season: 1, episodes: SPLIT_SEASON_AT,
+    }));
+    try {
+      await openGaps();
+      await openSeasonAttachDialog('Reacher');
+
+      // Reacher is missing episodes from two seasons, so the dialog opens on
+      // the chooser — a radio group with nothing checked, which is both a
+      // labelling surface axe can check and the "nothing asked upstream yet"
+      // property it cannot (REQ-GAPS-018).
+      await page.waitForSelector('.season-pick');
+      expect(await page.locator('.season-pick input[type="radio"]').count()).toBe(2);
+      expect(await page.locator('.season-pick input[type="radio"]:checked').count()).toBe(0);
+      await scan('Gaps (season chooser)');
+
+      await page.click('.season-pick__option:has-text("Season 1") input');
+      await page.waitForSelector('.grab-target');
+      await page.fill('#season-attach-link', MAGNET);
+      await scan('Gaps (season confirmation, resolved)');
+
+      await page.keyboard.press('Escape');
+      await expect.poll(() => page.locator('.modal[role="dialog"]').count()).toBe(0);
+    } finally {
+      sonarr.setParse(parsedSeries({ id: 1, title: 'Reacher', season: 1, episode: 1 }));
+    }
   });
 
   it('Library Gaps has zero violations with the bulk-search confirmation open', async () => {

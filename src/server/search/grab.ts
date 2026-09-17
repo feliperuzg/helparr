@@ -116,21 +116,23 @@ export async function resolveTarget(
   if (!dest.ok) return dest;
 
   const parsed = await readThrough(dest.value.id, () => dest.value.client.parse(title, signal));
-  if (!parsed.ok) {
-    return {
-      ok: true,
-      value: {
-        resolved: false,
-        seriesId: null,
-        movieId: null,
-        label: null,
-        quality: null,
-        releaseGroup: null,
-      },
-    };
-  }
+  if (!parsed.ok) return { ok: true, value: UNRESOLVED_TARGET };
   return { ok: true, value: parsed.value };
 }
+
+/** The designed unresolved state — what a failed pre-flight degrades to. */
+export const UNRESOLVED_TARGET: ParsedTarget = {
+  resolved: false,
+  seriesId: null,
+  movieId: null,
+  label: null,
+  quality: null,
+  releaseGroup: null,
+  seasonNumber: null,
+  fullSeason: false,
+  isMultiSeason: false,
+  episodeCount: 0,
+};
 
 /* ── Evaluate: the destination's own verdict, on request only (ADR-5) ─────── */
 

@@ -8,6 +8,7 @@ import type {
   InstanceKind,
   InstanceReadError,
   QueueErrorKind,
+  SeriesDetail,
 } from '@/lib/types';
 import {
   countsAsBreakerFailure,
@@ -204,6 +205,7 @@ function attribute(target: Target, record: ArrGapRecord, library: LibrarySnapsho
     kind: record.kind,
     upstreamId: record.upstreamId,
     seriesId: record.seriesId,
+    seasonNumber: record.seasonNumber,
     // Never dropped when the join misses (ADR-3): the row keeps its code and
     // title and says the series is unknown, rather than vanishing from a list
     // whose whole purpose is completeness. The id stays in the heading so two
@@ -327,6 +329,38 @@ export async function readGaps(
  * `source: 'inferred'` so the client cannot render helparr's reading as the
  * instance's own.
  */
+/**
+ * One series, read on demand for the season-attach confirmation (ADR-4).
+ *
+ * **Null on every failure, deliberately.** This read exists to say how many
+ * episodes of a season already have a file; when it cannot be made, the
+ * confirmation says nothing about that rather than saying zero. It is not an
+ * error state — the parse beside it is what the dialog is really waiting on,
+ * and the attach stays offered either way.
+ */
+export async function readSeriesDetail(
+  instanceId: string,
+  seriesId: number,
+  signal?: AbortSignal,
+): Promise<SeriesDetail | null> {
+  const entry = clientFor(instanceId);
+  if (!entry || !isGapClient(entry.client) || entry.kind !== 'sonarr') return null;
+
+  const target: Target = {
+    id: entry.id,
+    kind: entry.kind,
+    label: entry.label,
+    client: entry.client,
+  };
+  const read = await readFrom(
+    target,
+    (d) => target.client.seriesDetail(seriesId, d),
+    signal ?? AbortSignal.timeout(FANOUT_DEADLINE_MS),
+  );
+
+  return read.value;
+}
+
 export async function readGapHistory(
   instanceId: string,
   item: { kind: GapKind; upstreamId: number },

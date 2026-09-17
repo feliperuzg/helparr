@@ -11,6 +11,7 @@ import type {
   QueueRecord,
   ReleaseRead,
   RemovalRequest,
+  SeriesDetail,
   SeriesSummary,
   TorrentState,
 } from '@/lib/types';
@@ -282,6 +283,13 @@ export interface GapClient extends InstanceClient {
    * records are self-contained, so there is nothing to join and no cache entry.
    */
   series(signal?: AbortSignal): Promise<ClientResult<SeriesSummary[]>>;
+  /**
+   * One series, with the per-season counts `series()` deliberately discards.
+   * Read on demand by the season-attach confirmation and by nothing else — it
+   * is never cached and never issued per row (NFR2, ADR-4). Radarr implements
+   * it as a refusal: a film has no season.
+   */
+  seriesDetail(id: number, signal?: AbortSignal): Promise<ClientResult<SeriesDetail>>;
   /** Cached beside `series()`: the id→name map the `Wanted` column needs. */
   qualityProfiles(signal?: AbortSignal): Promise<ClientResult<QualityProfileSummary[]>>;
   /** One item's history, read on demand from the inspector — never per row. */

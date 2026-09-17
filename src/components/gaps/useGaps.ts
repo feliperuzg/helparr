@@ -11,6 +11,7 @@ import type {
   GapKind,
   GapsResponse,
   GrabOutcome,
+  SeasonAttachPreview,
 } from '@/lib/types';
 import { OPERATIONS_KEY } from '@/components/search/useSearch';
 
@@ -97,6 +98,25 @@ export function useAttachPreview(gapId: string | null) {
 }
 
 /**
+ * The season pre-flight — the same read-only contract, one scope wider.
+ *
+ * `season` is in the key *and* in `enabled`, and both matter. In the key because
+ * changing the choice must produce a different answer, not a cached one; in
+ * `enabled` because nothing is asked until a season has actually been chosen —
+ * the chooser's first state issues no request at all (REQ-GAPS-018).
+ */
+export function useSeasonAttachPreview(gapId: string | null, season: number | null) {
+  return useQuery<SeasonAttachPreview>({
+    queryKey: ['gaps', 'resolve', gapId, season],
+    queryFn: ({ signal }) => api.resolveSeason(gapId as string, season as number, signal),
+    enabled: gapId !== null && season !== null,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+/**
  * The write (FR6..FR8).
  *
  * No optimistic update: the gap stays listed whatever the answer is, because
@@ -108,6 +128,25 @@ export function useAttachGap() {
 
   return useMutation<GrabOutcome, Error, { gapId: string; link: string }>({
     mutationFn: (body) => api.attachGap(body),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: OPERATIONS_KEY });
+      void client.invalidateQueries({ queryKey: GAPS_KEY });
+    },
+  });
+}
+
+/**
+ * The season write — one push, one operation row, whatever the pack turns out to
+ * contain (FR6, FR8, FR10).
+ *
+ * Same invalidations as the episode attach, and for the same reason: the season
+ * stays listed until a later library read says otherwise.
+ */
+export function useAttachSeason() {
+  const client = useQueryClient();
+
+  return useMutation<GrabOutcome, Error, { gapId: string; season: number; link: string }>({
+    mutationFn: (body) => api.attachSeason(body),
     onSettled: () => {
       void client.invalidateQueries({ queryKey: OPERATIONS_KEY });
       void client.invalidateQueries({ queryKey: GAPS_KEY });

@@ -89,6 +89,12 @@ export interface FakeArr {
   wantedRequests: Array<{ params: Record<string, string> }>;
   /** What `GET /series` returns — the Sonarr join source (ADR-3). */
   setSeries: (series: unknown[]) => void;
+  /**
+   * What `GET /series/{id}` returns — the per-season statistics the season
+   * confirmation reads (ADR-4). `null` answers 404, which is the shape a failed
+   * detail read takes: counts absent, never zero.
+   */
+  setSeriesDetail: (detail: unknown | null) => void;
   /** What `GET /qualityprofile` returns. */
   setProfiles: (profiles: Array<{ id: number; name: string }>) => void;
   /** What a history read answers with, for `inferReason`'s input. */
@@ -162,6 +168,59 @@ export function parsedSeries(options: {
 }
 
 /**
+ * A `/parse` body for a **season-scoped** name — the answer a real Sonarr gives
+ * `FROM.S02.WEBDL-1080p`: every episode of the season resolved, `fullSeason`
+ * set, and no episode number in the parsed info.
+ */
+export function parsedSeason(options: {
+  id?: number;
+  title?: string;
+  season?: number;
+  episodes?: number;
+  isMultiSeason?: boolean;
+  quality?: string;
+} = {}): unknown {
+  const season = options.season ?? 1;
+  const count = options.episodes ?? 10;
+  return {
+    series: { id: options.id ?? 42, title: options.title ?? 'Show' },
+    episodes: Array.from({ length: count }, (_, i) => ({
+      seasonNumber: season,
+      episodeNumber: i + 1,
+    })),
+    parsedEpisodeInfo: {
+      seasonNumber: season,
+      fullSeason: true,
+      isMultiSeason: options.isMultiSeason ?? false,
+      quality: { quality: { name: options.quality ?? 'WEBDL-1080p' } },
+      releaseGroup: 'GROUP',
+    },
+  };
+}
+
+/** A `GET /series/{id}` body carrying `seasons[].statistics`. */
+export function fakeSeriesDetail(options: {
+  id?: number;
+  title?: string;
+  path?: string;
+  seasons: Array<{ seasonNumber: number; episodeCount: number; episodeFileCount: number }>;
+}): unknown {
+  return {
+    id: options.id ?? 1,
+    title: options.title ?? 'Show',
+    path: options.path ?? '/tv/Show',
+    seasons: options.seasons.map((season) => ({
+      seasonNumber: season.seasonNumber,
+      monitored: true,
+      statistics: {
+        episodeCount: season.episodeCount,
+        episodeFileCount: season.episodeFileCount,
+      },
+    })),
+  };
+}
+
+/**
  * A stand-in for Sonarr/Radarr/Prowlarr over real loopback HTTP. Real sockets,
  * not a fetch mock: the outcomes under test (unreachable, unexpected response)
  * are produced by the network layer, and a mock would be asserting that the
@@ -191,6 +250,7 @@ export async function startFakeArr(options: {
   let wanted: FakeGapRecord[] = [];
   let wantedTotalOverride: number | null = null;
   let series: unknown[] = [];
+  let seriesDetail: unknown | null = null;
   let profiles: Array<{ id: number; name: string }> = [];
   let history: unknown[] = [];
   let commandStatus: number | null = null;
@@ -270,6 +330,17 @@ export async function startFakeArr(options: {
 
     if (url.pathname === `${apiBase}/series`) {
       send(200, series);
+      return;
+    }
+
+    if (url.pathname.startsWith(`${apiBase}/series/`)) {
+      // Unset means "this read failed", which is a state the season
+      // confirmation has to survive with its counts absent rather than zero.
+      if (seriesDetail === null) {
+        send(404, { error: 'Not found' });
+        return;
+      }
+      send(200, seriesDetail);
       return;
     }
 
@@ -382,6 +453,7 @@ export async function startFakeArr(options: {
     setWanted: (records) => { wanted = records; },
     setWantedTotal: (total) => { wantedTotalOverride = total; },
     setSeries: (next) => { series = next; },
+    setSeriesDetail: (next) => { seriesDetail = next; },
     setProfiles: (next) => { profiles = next; },
     setHistory: (events) => { history = events; },
     failCommands: (status) => { commandStatus = status; },

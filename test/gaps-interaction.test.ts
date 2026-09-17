@@ -2,7 +2,9 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { login, seedInstance, startApp, type AppServer } from './helpers/appServer';
-import { parsedSeries, startFakeArr, type FakeArr, type FakeGapRecord } from './helpers/fakeArr';
+import {
+  parsedSeason, parsedSeries, startFakeArr, type FakeArr, type FakeGapRecord,
+} from './helpers/fakeArr';
 
 /**
  * T20 / AC1, AC5..AC9, AC11 — the gaps screen in a real browser.
@@ -22,6 +24,11 @@ import { parsedSeries, startFakeArr, type FakeArr, type FakeGapRecord } from './
  *     upstream actually received, not by reading the handlers: opening the
  *     attach dialog costs one `GET /parse` and zero pushes; opening the bulk
  *     dialog costs nothing at all.
+ *
+ * T13 / AC9 extends the third claim to the season attach, which is opened from a
+ * group heading rather than from a row: the resolved episode count and the name
+ * being offered are both on screen while the push count is still zero, and the
+ * heading that offers it exists on a series group and not on a film one.
  *
  * Gated behind HELPARR_E2E_TEST (set by `npm run test:e2e`).
  */
@@ -466,6 +473,102 @@ describe('gaps interaction', { timeout: 120_000 }, () => {
     expect(sonarr.pushes).toHaveLength(1);
 
     await scopeTo('All');
+  });
+
+  /* ── The season confirmation (AC9) ──────────────────────────────────────── */
+
+  it('offers a season pack from every series heading and from no film heading', async () => {
+    // One button per series group, named by the series — a column of identical
+    // "Attach season pack" buttons would be unreadable in a screen reader, and
+    // unclickable in a test, which is the same defect stated twice.
+    expect(await page.locator('.ggrid__group-action').allTextContents())
+      .toEqual(['Attach season pack', 'Attach season pack']);
+    expect(await page.locator('.ggrid__group-action').evaluateAll(
+      (buttons) => buttons.map((button) => button.getAttribute('aria-label')),
+    )).toEqual([
+      'Attach a season pack to Reacher',
+      'Attach a season pack to Silo',
+    ]);
+
+    // And not on Films: a film has no season, so the action does not exist
+    // there rather than existing and refusing (NFR4).
+    expect(await page.locator('.ggrid__group:has-text("Films")').count()).toBe(1);
+    expect(await page.locator('.ggrid__group:has-text("Films") .ggrid__group-action').count())
+      .toBe(0);
+  });
+
+  it('names the resolved episode count and the offered name before anything is sent', async () => {
+    // A season-scoped answer for this one test. The shared fake resolves every
+    // name to a single episode, which is the shape a season pack must not have.
+    sonarr.setParse(parsedSeason({ id: 1, title: 'Reacher', season: 1, episodes: 10 }));
+    try {
+      await page.click('.ggrid__group-action[aria-label="Attach a season pack to Reacher"]');
+      await page.waitForSelector('.modal[role="dialog"]');
+      expect(await page.textContent('.modal__title')).toBe('Attach a season pack to Reacher');
+
+      // Reacher is missing episodes from one season only, so the chooser is not
+      // a question — preselected, and still named (REQ-GAPS-012).
+      expect(await page.textContent('.season-pick__chosen')).toContain('Season 1');
+
+      await page.waitForSelector('.grab-target');
+      const target = await page.textContent('.grab-target');
+      expect(target).toContain('Reacher — season 1');
+      // The instance's own count of what the name resolved to. helparr never
+      // restates the episode set (FR4) — ten is what Sonarr said.
+      expect(target).toContain('Sonarr resolved 10 episodes');
+      expect(target).toContain('/tv/Reacher');
+
+      // The name being offered, shown plainly: a season token and no episode
+      // token is the entire mechanism (REQ-GAPS-019).
+      const body = await page.textContent('.modal__body');
+      expect(body).toContain('sending as Reacher.S01.WEBDL-1080p');
+      expect(body).not.toMatch(/S\d{2}E\d{2}/);
+
+      // All of that, and the upstream has received no push (REQ-GAPS-018).
+      expect(sonarr.pushes).toHaveLength(0);
+      expect(sonarr.hits.some((h) => h.path.startsWith('/api/v3/parse'))).toBe(true);
+
+      await page.click('.modal__foot button:has-text("Cancel")');
+      await expect.poll(() => page.locator('.modal').count()).toBe(0);
+      expect(sonarr.pushes).toHaveLength(0);
+    } finally {
+      sonarr.setParse(parsedSeries({ id: 1, title: 'Reacher', season: 1, episode: 1 }));
+    }
+  });
+
+  it('pushes one season-scoped name on confirm, and leaves the gaps listed', async () => {
+    sonarr.setParse(parsedSeason({ id: 2, title: 'Silo', season: 2, episodes: 10 }));
+    try {
+      await page.click('.ggrid__group-action[aria-label="Attach a season pack to Silo"]');
+      await page.waitForSelector('#season-attach-link');
+
+      const magnet = 'magnet:?xt=urn:btih:9f2c1d4a7b3e5f6089abcdef0123456789abcdef';
+      await page.fill('#season-attach-link', magnet);
+      await expect.poll(() => page.textContent('.modal__foot .btn-primary'))
+        .toBe('Attach to Sonarr');
+      await page.click('.modal__foot button:has-text("Attach to Sonarr")');
+
+      // One push for the whole season — not one per episode, which is what the
+      // download client would deduplicate away anyway (ADR-3).
+      await expect.poll(() => sonarr.pushes.length, { timeout: 15_000 }).toBe(1);
+      expect(sonarr.pushes[0].body).toMatchObject({
+        title: 'Silo.S02.WEBDL-1080p',
+        downloadUrl: magnet,
+        protocol: 'torrent',
+      });
+
+      await expect.poll(() => page.locator('.modal').count()).toBe(0);
+      await page.waitForSelector('.toast');
+      expect(await page.textContent('.toast'))
+        .toBe('Attached to Sonarr — will import as Silo — season 2');
+
+      // Not optimistic: the instance accepted a download, which is not the same
+      // as having the season (REQ-GAPS-011).
+      await expect.poll(() => page.locator('.ggrid__body-row').count()).toBe(TOTAL);
+      expect(sonarr.pushes).toHaveLength(1);
+    } finally {
+      sonarr.setParse(parsedSeries({ id: 1, title: 'Reacher', season: 1, episode: 1 }));
+    }
   });
 
   it('reports a refusal as a refusal, and still leaves the gap listed', async () => {

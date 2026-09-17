@@ -1,9 +1,9 @@
 import 'server-only';
 
 import { isAttachableLink } from '@/lib/attach';
-import type { AttachPreview, Gap, GrabOutcome } from '@/lib/types';
+import type { AttachPreview, Gap, GrabOutcome, SeasonAttachPreview } from '@/lib/types';
 import { grab, resolveTarget, type Attempt } from '@/server/search/grab';
-import { findGap } from './aggregate';
+import { findGap, readSeriesDetail } from './aggregate';
 import { invalidateLibrary } from './seriesCache';
 
 /**
@@ -52,6 +52,20 @@ export function synthesizeTitle(gap: Gap): string {
   return `${stem}.WEBDL-1080p`;
 }
 
+/**
+ * The name helparr offers for a **season**, and the whole feature in one line:
+ * a season token and no episode token.
+ *
+ * `FROM.S02E01.WEBDL-1080p` resolves to one episode by construction, and Sonarr
+ * then scopes the grab to that one id — every other file in the pack is refused
+ * at import (Sonarr#8911). `FROM.S02.WEBDL-1080p` parses as `fullSeason` and
+ * resolves the season's whole set. The quality token is the same stated default
+ * the episode name carries, for the same reason (REQ-GAPS-019).
+ */
+export function synthesizeSeasonTitle(gap: Gap, season: number): string {
+  return `${sanitize(gap.groupTitle)}.S${String(season).padStart(2, '0')}.WEBDL-1080p`;
+}
+
 function missingGap(gapId: string): Attempt<never> {
   return {
     ok: false,
@@ -79,6 +93,41 @@ function matchesGap(gap: Gap, target: { resolved: boolean; seriesId: number | nu
 }
 
 /**
+ * Did the instance resolve the **season** the operator chose?
+ *
+ * Deliberately not the episode predicate with a different argument. On a
+ * full-season parse `episodeLabel()` joins every resolved code, so
+ * `label.includes('S02E01')` still passes — while testing something nobody
+ * asked about. Series id and season number are the two facts the scope is made
+ * of, and `GET /parse` returns both (OQ-5).
+ */
+function matchesSeason(
+  gap: Gap,
+  season: number,
+  target: { resolved: boolean; seriesId: number | null; seasonNumber: number | null },
+): boolean {
+  if (gap.kind !== 'episode') return false;
+  if (!target.resolved) return false;
+  if (target.seriesId === null || target.seriesId !== gap.seriesId) return false;
+  return target.seasonNumber === season;
+}
+
+/**
+ * A film has no season (NFR4). The refusal lives here as well as in the UI
+ * because the route is reachable without the UI, and a season-scoped push
+ * against Radarr would be a write helparr cannot describe.
+ */
+function notSeasonScoped(gap: Gap): Attempt<never> {
+  return {
+    ok: false,
+    refusal: {
+      kind: 'not-grabbable',
+      reason: `${gap.instanceLabel} has no seasons — a season attach only applies to a Sonarr series.`,
+    },
+  };
+}
+
+/**
  * Phase 1 — read-only. Nothing here can write: it is a synthesized name and a
  * `GET /parse`, and `resolveTarget` degrades a parse failure into the
  * unresolved branch rather than an error.
@@ -103,6 +152,51 @@ export async function previewAttach(
       // Where the instance says it keeps this item. Shown so the operator can
       // sanity-check the destination before the file moves, not after.
       path: gap.targetPath,
+    },
+  };
+}
+
+/**
+ * Phase 1, season scope — read-only, and two reads that fail independently
+ * (NFR1, ADR-4).
+ *
+ * `GET /parse` says what the instance makes of the name; `GET /series/{id}`
+ * says how much of the season is already on disk. They are issued together
+ * because they answer the same question at the same instant, and neither is
+ * allowed to take the other down: a failed detail read leaves both counts null
+ * and the dialog is otherwise the ordinary confirmation.
+ */
+export async function previewSeasonAttach(
+  gapId: string,
+  season: number,
+  signal?: AbortSignal,
+): Promise<Attempt<SeasonAttachPreview>> {
+  const gap = await findGap(gapId, signal);
+  if (!gap) return missingGap(gapId);
+  if (gap.kind !== 'episode' || gap.seriesId === null) return notSeasonScoped(gap);
+
+  const title = synthesizeSeasonTitle(gap, season);
+  const [resolved, detail] = await Promise.all([
+    resolveTarget(gap.instanceId, title, signal),
+    readSeriesDetail(gap.instanceId, gap.seriesId, signal),
+  ]);
+  if (!resolved.ok) return resolved;
+
+  // Absent, never zero: a season Sonarr did not report statistics for is a
+  // season helparr knows nothing about, and the warning it feeds is a claim
+  // about the operator's disk (ADR-4).
+  const stat = detail?.seasons.find((entry) => entry.seasonNumber === season) ?? null;
+
+  return {
+    ok: true,
+    value: {
+      title,
+      target: resolved.value,
+      matchesSeason: matchesSeason(gap, season, resolved.value),
+      path: gap.targetPath,
+      season,
+      seasonEpisodeCount: stat?.episodeCount ?? null,
+      seasonFileCount: stat?.episodeFileCount ?? null,
     },
   };
 }
@@ -158,6 +252,69 @@ export async function attach(
   // Unconditional, including on a rejection: helparr cannot tell from here
   // whether the instance changed anything on its way to saying no, and a cache
   // miss costs one library read while a stale cache costs correctness.
+  invalidateLibrary(gap.instanceId);
+
+  return outcome;
+}
+
+/**
+ * Phase 2, season scope — **exactly one** `grab()`, whatever the parse said
+ * (FR6, ADR-3).
+ *
+ * The tempting shape is a loop: one push per season in a multi-season pack.
+ * It cannot work — the download client deduplicates by infoHash, so pushes two
+ * onwards are silently discarded — and a loop that appears to do something and
+ * does nothing is worse than the warning the confirmation already showed.
+ *
+ * The season, like the title, is re-derived here rather than trusted from the
+ * request body: the browser says which gap and which season number, and helparr
+ * decides what that means and what it is called (NFR3).
+ */
+export async function attachSeason(
+  input: { gapId: string; season: number; link: string },
+  signal?: AbortSignal,
+): Promise<Attempt<GrabOutcome>> {
+  const gap = await findGap(input.gapId, signal);
+  if (!gap) return missingGap(input.gapId);
+  if (gap.kind !== 'episode' || gap.seriesId === null) return notSeasonScoped(gap);
+
+  const link = input.link.trim();
+  if (!isAttachableLink(link)) {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'no-url',
+        reason: 'That is not a magnet link or a .torrent URL, so there is nothing to send.',
+      },
+    };
+  }
+
+  const title = synthesizeSeasonTitle(gap, input.season);
+
+  // Re-read for the same reason the episode attach re-reads: the log should
+  // carry what the instance said at the moment of the write, not what it said
+  // when the dialog opened. A failure here is a null `entityRef`, not a failure
+  // to attach.
+  const resolved = await resolveTarget(gap.instanceId, title, signal);
+  // The scope, named — not the parse's episode list. `episodeLabel()` joins
+  // every resolved code, and an operation row reading `S02E01, S02E02, …` for a
+  // season attach describes the wrong unit of work (FR8).
+  const entityRef = resolved.ok && resolved.value.resolved
+    ? `${gap.groupTitle} — season ${input.season}`
+    : null;
+
+  const outcome = await grab({
+    instanceId: gap.instanceId,
+    title,
+    downloadUrl: link,
+    protocol: 'torrent',
+    publishDate: new Date().toISOString(),
+    indexer: null,
+    entityRef,
+    operationKind: 'attach',
+  }, signal);
+
+  // Unconditional, as the episode attach is, and for the same reason (FR10).
   invalidateLibrary(gap.instanceId);
 
   return outcome;

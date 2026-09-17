@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { requireSession } from '@/server/auth/guard';
-import { previewAttach } from '@/server/gaps/attach';
+import { previewAttach, previewSeasonAttach } from '@/server/gaps/attach';
 import { refusalResponse } from '@/server/search/refusal';
 
 export const runtime = 'nodejs';
@@ -21,8 +21,17 @@ export const dynamic = 'force-dynamic';
  * explicitly uncacheable.
  */
 
+/**
+ * Scope lives in the body, not in the path (ADR-7). `season` present means a
+ * season-scoped pre-flight; absent means the episode one, which calls literally
+ * the same function it called before this feature existed (FR9).
+ *
+ * Bounded rather than free: `-1` is not a season, and Sonarr's own numbering
+ * starts at 0 for specials.
+ */
 const resolveSchema = z.object({
   gapId: z.string().min(1).max(256),
+  season: z.number().int().min(0).max(999).optional(),
 });
 
 export async function POST(request: Request) {
@@ -36,7 +45,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid resolve request.' }, { status: 400 });
   }
 
-  const outcome = await previewAttach(input.gapId, request.signal);
+  const outcome = input.season === undefined
+    ? await previewAttach(input.gapId, request.signal)
+    : await previewSeasonAttach(input.gapId, input.season, request.signal);
   if (!outcome.ok) return refusalResponse(outcome.refusal);
 
   // `resolved: false` and `matchesGap: false` are both 200s. The dialog has a

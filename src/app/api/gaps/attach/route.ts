@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { requireSession } from '@/server/auth/guard';
-import { attach } from '@/server/gaps/attach';
+import { attach, attachSeason } from '@/server/gaps/attach';
 import { refusalResponse } from '@/server/search/refusal';
 
 export const runtime = 'nodejs';
@@ -28,6 +28,10 @@ const attachSchema = z.object({
   // A magnet or a `.torrent` URL. Shape-checked again in `attach()`, which
   // refuses anything else with a `no-url` refusal rather than pushing it.
   link: z.string().min(1).max(4096),
+  // The scope, declared in the body (ADR-7). Present means a season attach;
+  // absent means the episode attach, unchanged. The *number* is the browser's
+  // to say; what it is called, and whether the gap even has seasons, is not.
+  season: z.number().int().min(0).max(999).optional(),
 });
 
 export async function POST(request: Request) {
@@ -44,7 +48,9 @@ export async function POST(request: Request) {
   // No `request.signal`, matching `/api/grab` and for the same reason: a
   // navigation away mid-push must not cancel a request the instance may already
   // have accepted, which would leave a download running and no row saying so.
-  const outcome = await attach(input);
+  const outcome = input.season === undefined
+    ? await attach(input)
+    : await attachSeason({ gapId: input.gapId, season: input.season, link: input.link });
   if (!outcome.ok) return refusalResponse(outcome.refusal);
 
   return NextResponse.json(outcome.value, {

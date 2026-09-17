@@ -53,6 +53,7 @@ function gap(over: Partial<Gap> = {}): Gap {
     kind: 'episode',
     upstreamId: 5,
     seriesId: 1,
+    seasonNumber: 4,
     groupTitle: 'Reacher',
     itemCode: 'S04E02',
     title: 'Episode 2',

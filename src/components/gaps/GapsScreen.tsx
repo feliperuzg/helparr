@@ -6,8 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AttachDialog from '@/components/gaps/AttachDialog';
 import BulkSearchDialog from '@/components/gaps/BulkSearchDialog';
 import GapInspector from '@/components/gaps/GapInspector';
-import GapsGrid from '@/components/gaps/GapsGrid';
-import { useAttachGap, useBulkSearch, useGapsList } from '@/components/gaps/useGaps';
+import GapsGrid, { type SeasonTally } from '@/components/gaps/GapsGrid';
+import SeasonAttachDialog from '@/components/gaps/SeasonAttachDialog';
+import {
+  useAttachGap, useAttachSeason, useBulkSearch, useGapsList,
+} from '@/components/gaps/useGaps';
 import Icon from '@/components/Icon';
 import DegradedBanner from '@/components/queue/DegradedBanner';
 import { useListKeyboard, useSelection } from '@/components/useListKeyboard';
@@ -17,7 +20,7 @@ import {
 } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { formatAge } from '@/lib/queue';
-import type { Gap } from '@/lib/types';
+import type { Gap, GrabOutcome } from '@/lib/types';
 
 /**
  * The gaps screen (REQ-GAPS-001…-017; FR1…FR9, FR16; T17).
@@ -35,6 +38,11 @@ import type { Gap } from '@/lib/types';
  *    dialog → confirm, for the attach and for the search alike (D7).
  * 4. **Nothing is optimistic.** A gap stays listed after an accepted attach:
  *    only a later library read can say the file now exists (REQ-GAPS-011).
+ *
+ * The season attach (FR1..FR10) is a fifth dialog under the same four rules. It
+ * is opened from a group header rather than from a row, which is the only thing
+ * that makes it different from here: same confirm-then-write, same
+ * closes-on-response, same keyboard suppression while it is up.
  */
 
 const HINTS: Array<[string[], string]> = [
@@ -64,11 +72,17 @@ export default function GapsScreen() {
   const [scope, setScope] = useState<Scope>('all');
   const [openId, setOpenId] = useState<string | null>(null);
   const [attaching, setAttaching] = useState<Gap | null>(null);
+  // The anchor gap and the seasons its group is missing, captured when the
+  // header button was pressed — not re-derived while the dialog is up.
+  const [seasonAttach, setSeasonAttach] = useState<
+    { gap: Gap; seasons: SeasonTally[] } | null
+  >(null);
   const [searching, setSearching] = useState<Gap[] | null>(null);
   const [retrying, setRetrying] = useState<ReadonlySet<string>>(() => new Set());
 
   const gapsList = useGapsList();
   const attach = useAttachGap();
+  const attachSeason = useAttachSeason();
   const bulkSearch = useBulkSearch();
   const { selected, toggle, clear, reconcile } = useSelection();
 
@@ -97,6 +111,7 @@ export default function GapsScreen() {
     // A confirmation whose subject can move underneath it is not a
     // confirmation. Re-scoping silently would be worse than closing.
     setSearching(null);
+    setSeasonAttach(null);
   }, []);
 
   const onOpen = useCallback((index: number) => {
@@ -131,7 +146,7 @@ export default function GapsScreen() {
     searchRef,
     // A dialog owns the keyboard while it is up: j/k moving a cursor behind a
     // confirmation is how the wrong item gets attached.
-    enabled: attaching === null && searching === null,
+    enabled: attaching === null && searching === null && seasonAttach === null,
   });
 
   const errors = gapsList.data?.errors ?? [];
@@ -159,6 +174,36 @@ export default function GapsScreen() {
     [visible, selected],
   );
 
+  /**
+   * One report for both attaches. The scope differs; what the instance said
+   * about it does not, and two copies of this would drift on the next change to
+   * the rejection wording.
+   */
+  function reportAttach(instanceLabel: string, outcome: GrabOutcome) {
+    if (outcome.status === 'succeeded') {
+      push(
+        `Attached to ${instanceLabel}`
+          + (outcome.entityRef ? ` — will import as ${outcome.entityRef}` : ''),
+        'ok',
+      );
+    } else if (outcome.rejected) {
+      // The count here, the reasons verbatim in the operation log. A toast
+      // that disappears in four seconds is the wrong place for text the
+      // operator has to read carefully (REQ-GAPS-013).
+      const n = outcome.rejections.length;
+      push(
+        `${instanceLabel} declined the release`
+          + ` — ${n} reason${n === 1 ? '' : 's'}. See Activity.`,
+        'warn',
+      );
+    } else {
+      push(
+        `${instanceLabel} — ${outcome.detail ?? 'the attach failed'}. See Activity.`,
+        'error',
+      );
+    }
+  }
+
   function confirmAttach(link: string) {
     const gap = attaching;
     if (!gap) return;
@@ -168,31 +213,25 @@ export default function GapsScreen() {
         // The dialog closes on the response and the outcome arrives here —
         // never the other way round (FR8, REQ-GAPS-011).
         setAttaching(null);
-        if (outcome.status === 'succeeded') {
-          push(
-            `Attached to ${gap.instanceLabel}`
-              + (outcome.entityRef ? ` — will import as ${outcome.entityRef}` : ''),
-            'ok',
-          );
-        } else if (outcome.rejected) {
-          // The count here, the reasons verbatim in the operation log. A toast
-          // that disappears in four seconds is the wrong place for text the
-          // operator has to read carefully (REQ-GAPS-013).
-          const n = outcome.rejections.length;
-          push(
-            `${gap.instanceLabel} declined the release`
-              + ` — ${n} reason${n === 1 ? '' : 's'}. See Activity.`,
-            'warn',
-          );
-        } else {
-          push(
-            `${gap.instanceLabel} — ${outcome.detail ?? 'the attach failed'}. See Activity.`,
-            'error',
-          );
-        }
+        reportAttach(gap.instanceLabel, outcome);
       },
       // helparr itself failed, so no operation was logged and the dialog stays
       // up: the operator can retry the same confirmation.
+      onError: (error) => {
+        push(error instanceof ApiError ? error.message : 'The attach did not complete.', 'error');
+      },
+    });
+  }
+
+  function confirmSeasonAttach(season: number, link: string) {
+    const target = seasonAttach;
+    if (!target) return;
+
+    attachSeason.mutate({ gapId: target.gap.id, season, link }, {
+      onSuccess: (outcome) => {
+        setSeasonAttach(null);
+        reportAttach(target.gap.instanceLabel, outcome);
+      },
       onError: (error) => {
         push(error instanceof ApiError ? error.message : 'The attach did not complete.', 'error');
       },
@@ -298,7 +337,12 @@ export default function GapsScreen() {
                 label={option === 'all' ? 'All' : option === 'sonarr' ? 'Sonarr' : 'Radarr'}
                 selected={scope === option}
                 count={counts[option]}
-                onToggle={() => { setScope(option); setOpenId(null); setSearching(null); }}
+                onToggle={() => {
+                  setScope(option);
+                  setOpenId(null);
+                  setSearching(null);
+                  setSeasonAttach(null);
+                }}
               />
             ))}
           </ChipGroup>
@@ -374,6 +418,7 @@ export default function GapsScreen() {
                 selected={selected}
                 onToggleSelect={toggle}
                 onToggleAll={toggleAll}
+                onAttachSeason={(gap, seasons) => setSeasonAttach({ gap, seasons })}
               />
             )}
           </section>
@@ -412,6 +457,16 @@ export default function GapsScreen() {
           busy={attach.isPending}
           onCancel={() => setAttaching(null)}
           onConfirm={confirmAttach}
+        />
+      ) : null}
+
+      {seasonAttach ? (
+        <SeasonAttachDialog
+          gap={seasonAttach.gap}
+          seasons={seasonAttach.seasons}
+          busy={attachSeason.isPending}
+          onCancel={() => setSeasonAttach(null)}
+          onConfirm={confirmSeasonAttach}
         />
       ) : null}
 
