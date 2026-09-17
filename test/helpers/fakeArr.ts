@@ -103,6 +103,41 @@ export interface FakeArr {
   commands: Array<{ body: Record<string, unknown> }>;
   /** Makes `POST /command` answer with this status instead of 201. */
   failCommands: (status: number | null) => void;
+
+  /* ── Rename surface (bulk-rename-preview) ──────────────────────────────── */
+
+  /**
+   * What `GET /rename` answers.
+   *
+   * A resolver rather than a value because the whole feature turns on the
+   * preview being read *twice* — once to build the plan and once to verify what
+   * the command actually did (ADR-7) — and the interesting cases are precisely
+   * the ones where the second read disagrees with the first. `callIndex` is
+   * 0-based and counts reads for that title.
+   */
+  setRenamePreview: (
+    resolver: unknown[] | ((query: Record<string, string>, callIndex: number) => unknown[]),
+  ) => void;
+  /** Every `/rename` read, with the query it carried. */
+  renameReads: Array<{ params: Record<string, string> }>;
+  /**
+   * What `GET /command/{id}` answers. Defaults to completed/successful —
+   * which, measured live, is what a rename that did nothing also answers
+   * (ADR-7), so a test asserting success must never rest on this alone.
+   */
+  setCommandOutcome: (outcome: {
+    status?: string;
+    result?: string;
+    message?: string | null;
+  }) => void;
+  /**
+   * What `GET /filesystem` reports, keyed by absolute directory path *with* its
+   * trailing slash. An unlisted directory answers as empty, the same way a real
+   * instance answers for a folder that does not exist yet.
+   */
+  setFilesystem: (entries: Record<string, string[]>) => void;
+  /** Every `/filesystem` read, by the raw `path` parameter it was given. */
+  filesystemReads: string[];
 }
 
 /** Only the fields `toGapRecord` reads; everything else is noise. */
@@ -256,6 +291,12 @@ export async function startFakeArr(options: {
   let commandStatus: number | null = null;
   const wantedRequests: FakeArr['wantedRequests'] = [];
   const commands: FakeArr['commands'] = [];
+  let renamePreview: unknown[] | ((query: Record<string, string>, callIndex: number) => unknown[]) = [];
+  let commandOutcome = { status: 'completed', result: 'successful', message: null as string | null };
+  let filesystem: Record<string, string[]> = {};
+  const renameReads: FakeArr['renameReads'] = [];
+  const filesystemReads: FakeArr['filesystemReads'] = [];
+  const renameCallCounts = new Map<string, number>();
 
   const server: Server = createServer((req, res) => {
     const apiKey = (req.headers['x-api-key'] as string | undefined) ?? null;
@@ -359,6 +400,48 @@ export async function startFakeArr(options: {
       return;
     }
 
+    if (url.pathname === `${apiBase}/rename`) {
+      const params = Object.fromEntries(url.searchParams.entries());
+      renameReads.push({ params });
+      const key = params.seriesId ?? params.movieId ?? '';
+      const callIndex = renameCallCounts.get(key) ?? 0;
+      renameCallCounts.set(key, callIndex + 1);
+      send(200, typeof renamePreview === 'function'
+        ? renamePreview(params, callIndex)
+        : renamePreview);
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/filesystem`) {
+      const path = url.searchParams.get('path') ?? '';
+      filesystemReads.push(path);
+      // Keyed on the path exactly as given. A caller that forgets the trailing
+      // slash gets a miss here, which is the same class of wrong answer a real
+      // instance gives — it resolves the parent — without this fake having to
+      // model directory traversal to prove the point.
+      send(200, {
+        parent: null,
+        directories: [],
+        files: (filesystem[path] ?? []).map((name) => ({ name, path: `${path}${name}` })),
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname.startsWith(`${apiBase}/command/`)) {
+      const id = Number(url.pathname.slice(`${apiBase}/command/`.length));
+      send(200, { id, name: 'Command', ...commandOutcome });
+      return;
+    }
+
+    if (url.pathname.startsWith(`${apiBase}/movie/`)) {
+      if (seriesDetail === null) {
+        send(404, { error: 'Not found' });
+        return;
+      }
+      send(200, seriesDetail);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === `${apiBase}/command`) {
       let raw = '';
       req.on('data', (chunk) => { raw += chunk; });
@@ -457,6 +540,11 @@ export async function startFakeArr(options: {
     setProfiles: (next) => { profiles = next; },
     setHistory: (events) => { history = events; },
     failCommands: (status) => { commandStatus = status; },
+    setRenamePreview: (resolver) => { renamePreview = resolver; renameCallCounts.clear(); },
+    renameReads,
+    setCommandOutcome: (outcome) => { commandOutcome = { ...commandOutcome, ...outcome }; },
+    setFilesystem: (entries) => { filesystem = entries; },
+    filesystemReads,
     setParse: (body) => { parseBody = body; },
     setCandidates: (next) => { candidates = next; },
     setPushResult: (result) => { pushResult = result; },

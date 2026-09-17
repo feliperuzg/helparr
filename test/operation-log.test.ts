@@ -172,8 +172,16 @@ describe('operation log integrity', () => {
       .replace(/\/\/.*$/gm, '');
 
     expect(source).not.toMatch(/\bUPDATE\b/i);
-    // Exactly one INSERT, and the only DELETE is the operator-triggered purge.
-    expect(source.match(/\bINSERT\s+INTO\b/gi)).toHaveLength(1);
+    // Exactly one INSERT into `operation`, and the only DELETE is the
+    // operator-triggered purge.
+    //
+    // Scoped to the table rather than counting INSERTs outright: this module
+    // also writes `rename_file_outcome`, the per-file detail a rename operation
+    // carries (NFR7). That row is appended in the same call as its parent and
+    // is never updated either, so the invariant is unchanged — but an
+    // unqualified count would read a second append-only table as a violation.
+    expect(source.match(/\bINSERT\s+INTO\s+operation\b/gi)).toHaveLength(1);
+    expect(source.match(/\bINSERT\s+INTO\b/gi)).toHaveLength(2);
     expect(source.match(/\bDELETE\s+FROM\s+operation\b/gi)).toHaveLength(1);
 
     // Nothing outside this module touches the table either — a second writer
