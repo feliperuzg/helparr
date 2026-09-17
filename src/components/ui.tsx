@@ -230,7 +230,11 @@ export function Inspector({
           <Icon name="x" size={14} />
         </button>
       </div>
-      <div className="inspector__body">{children}</div>
+      {/* Focusable because it scrolls (WCAG 2.1.1). A panel whose content
+          happens to contain a button is reachable by accident; one that does
+          not — the rename detail is paths, flags and prose — traps its own
+          overflow away from anyone not using a pointer. */}
+      <div className="inspector__body" tabIndex={0}>{children}</div>
       {footer ? <div className="inspector__foot">{footer}</div> : null}
     </aside>
   );

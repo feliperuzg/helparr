@@ -4,7 +4,7 @@ import { cleanupTestDir } from './helpers/env';
 import { startFakeArr, type FakeArr } from './helpers/fakeArr';
 import { closeDb } from '@/server/db';
 import { createInstance, deleteInstance } from '@/server/instances/registry';
-import { listOperations, purgeOperations } from '@/server/operations/log';
+import { listOperations, listRenameFileOutcomes, purgeOperations } from '@/server/operations/log';
 import { startApply } from '@/server/rename/apply';
 import { startBuild } from '@/server/rename/build';
 import { deriveWarnings, titleKeyOf } from '@/server/rename/resolve';
@@ -436,9 +436,24 @@ describe('rename plan build and apply', () => {
     expect(plan.phase).toBe('done');
     expect(plan.rows[0].outcome).toBe('succeeded');
 
-    // NFR7: the rename is in the operation log, per file.
+    // NFR7 / AC15: the rename is in the operation log, per file — and with
+    // enough detail to reconstruct it. "There is a row" is not that: what the
+    // criterion asks for is which file, from what path, to what path, and how
+    // it ended. A count alone would still pass if the paths were dropped, and
+    // the paths are the whole reason the log outlives the plan.
     const operations = listOperations('all');
-    expect(operations.operations.length).toBeGreaterThan(0);
+    const entry = operations.operations.find((op) => op.kind === 'rename');
+    expect(entry, 'no rename operation was logged').toBeDefined();
+    expect(entry!.summary).toContain('Renamed 1 of 1 files');
+
+    const outcomes = listRenameFileOutcomes(entry!.id);
+    expect(outcomes).toEqual([{
+      planRowId: plan.rows[0].id,
+      existingPath: 'loose.mkv',
+      proposedPath: 'Season 1/S01E01.mkv',
+      outcome: 'succeeded',
+      detail: null,
+    }]);
   });
 
   /** ADR-3 / REQ-RENAME-014. Five minutes is a ceiling, not a suggestion. */

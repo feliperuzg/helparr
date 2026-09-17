@@ -94,7 +94,11 @@ export default function RefusalPanel({
                   {drifted.length} file{drifted.length === 1 ? '' : 's'} no longer{' '}
                   {drifted.length === 1 ? 'matches' : 'match'} the preview
                 </h3>
-                <ul className="refusal__paths">
+                {/* Focusable because it scrolls past 240px and holds nothing
+                    that focuses on its own (WCAG 2.1.1) — and a drift long
+                    enough to scroll is exactly when the list must be readable
+                    to someone without a mouse. */}
+                <ul className="refusal__paths" tabIndex={0}>
                   {drifted.map((path) => (
                     <li key={path} className="mono">{path}</li>
                   ))}

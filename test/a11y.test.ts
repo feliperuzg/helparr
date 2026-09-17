@@ -33,6 +33,13 @@ import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fa
  * — three surfaces a rule engine can check, plus the one it cannot, which is
  * that a heading button is operable from the keyboard at all.
  *
+ * T19 / AC17, NFR6 adds bulk rename, which has more surfaces that only exist
+ * when something is wrong than any screen before it: the picker with an
+ * instance it could not read, a flagged preview, the typed confirmation in all
+ * three of its states, the applied screen, and the refusal. Plus the property
+ * NFR6 is actually about and axe cannot check — that a before/after diff is
+ * never carried by colour alone.
+ *
  * This drives the real standalone build in a real browser rather than rendering
  * components under jsdom. NFR7's requirements are mostly *rendered* properties
  * — visible `:focus-visible` rings from `--color-ring`, contrast ratios from the
@@ -59,11 +66,25 @@ const QUEUE_SIZE = 500;
  * that the grid virtualizes, and — unlike the queue or a result set — with group
  * headings interleaved between them, which is the structure the row-index and
  * tab-stop assertions below are about.
+ *
+ * `statistics` is there for the rename scans rather than the gaps ones: the
+ * rename picker offers only titles an instance holds a file for (FR1), so a
+ * series without a count is a series that screen never lists. The gaps join
+ * ignores the block entirely.
  */
 const GAP_SERIES = [
-  { id: 1, title: 'Reacher', path: '/tv/Reacher', qualityProfileId: 3 },
-  { id: 2, title: 'Silo', path: '/tv/Silo', qualityProfileId: 3 },
-  { id: 3, title: 'Severance', path: '/tv/Severance', qualityProfileId: 3 },
+  {
+    id: 1, title: 'Reacher', path: '/tv/Reacher', qualityProfileId: 3,
+    statistics: { episodeFileCount: 120 },
+  },
+  {
+    id: 2, title: 'Silo', path: '/tv/Silo', qualityProfileId: 3,
+    statistics: { episodeFileCount: 12 },
+  },
+  {
+    id: 3, title: 'Severance', path: '/tv/Severance', qualityProfileId: 3,
+    statistics: { episodeFileCount: 4 },
+  },
 ];
 const PER_SERIES = 100;
 const GAP_COUNT = GAP_SERIES.length * PER_SERIES;
@@ -89,6 +110,74 @@ const WANTED: FakeGapRecord[] = GAP_SERIES.flatMap((series, s) => (
 
 /** A well-formed link, so the confirmation reaches its resolved state. */
 const MAGNET = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567';
+
+/* ── The rename fixture (T19) ─────────────────────────────────────────────── */
+
+/** Where the fake answers `GET /series/{id}` from, and so where it lists files. */
+const RENAME_ROOT = '/tv/Reacher';
+/** A file already sitting in the destination folder, visible only to the
+ *  filesystem read — it has no rename pending, so it is not in any preview. */
+const OCCUPANT = 'Reacher - S01E01.mkv';
+
+/** Reacher's plan: every row moves, four of them carry a second flag. */
+const RENAME_FLAGGED = 120;
+/** Silo's plan: renamed in place, so not one of its rows is flagged. */
+const RENAME_PLAIN = 12;
+/** What the confirmation will ask to have typed. Severance contributes none. */
+const RENAME_TOTAL = RENAME_FLAGGED + RENAME_PLAIN;
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Reacher, previewed out of its series root and into a season folder — the
+ * shape the live spike found in the operator's own library, and the one that
+ * puts `moves-directory` on every rendered row rather than on none of them.
+ *
+ * Three rows carry a second flag, one per remaining warning helparr derives
+ * (ADR-9), and all three are inside the first rendered window on purpose: the
+ * first is proposed a destination the `OCCUPANT` already holds, the second and
+ * third are proposed the same destination as each other, and the fifth covers
+ * two episodes. Nothing upstream reports any of them.
+ */
+function flaggedPreview(): unknown[] {
+  return Array.from({ length: RENAME_FLAGGED }, (_, i) => {
+    const n = i + 1;
+    const destination = n === 3 ? 2 : n;
+    return {
+      seriesId: 1,
+      seasonNumber: 1,
+      episodeNumbers: n === 5 ? [5, 6] : [n],
+      episodeFileId: 1_000 + n,
+      existingPath: `reacher.s01e${pad(n)}.mkv`,
+      newPath: `Season 1/Reacher - S01E${pad(destination)}.mkv`,
+    };
+  });
+}
+
+/** Silo, tidied within its season folder: a rename that moves nothing. */
+function plainPreview(offset = 0): unknown[] {
+  return Array.from({ length: RENAME_PLAIN }, (_, i) => {
+    const n = i + 1;
+    return {
+      seriesId: 2,
+      seasonNumber: 1,
+      episodeNumbers: [n],
+      episodeFileId: 2_000 + n,
+      // `offset` shifts the *existing* path, which is half of the precondition
+      // ADR-3 checks — a shifted preview is a library that moved.
+      existingPath: `Season 1/silo.s01e${pad(n + offset)}.mkv`,
+      newPath: `Season 1/Silo - S01E${pad(n)}.mkv`,
+    };
+  });
+}
+
+/** Severance answers empty, so FR5's "Nothing to rename" list has an entry. */
+function renamePreviewFor(query: Record<string, string>): unknown[] {
+  const seriesId = Number(query.seriesId ?? 0);
+  if (seriesId === 1) return flaggedPreview();
+  if (seriesId === 2) return plainPreview();
+  return [];
+}
 
 let app: AppServer;
 let browser: Browser;
@@ -191,6 +280,35 @@ async function openSeasonAttachDialog(title: string) {
   await page.focus(`.ggrid__group-action[aria-label="Attach a season pack to ${title}"]`);
   await page.keyboard.press('Enter');
   await page.waitForSelector('.modal[role="dialog"]');
+}
+
+/** The rename scope picker, with the library listed. */
+async function openRenameScope() {
+  await page.goto(`${ORIGIN}/rename`);
+  await page.waitForSelector('.scope__item');
+}
+
+/**
+ * Picks `titles`, starts the build and waits for the finished plan.
+ *
+ * Waited on by the bulk bar's count rather than by the grid: the bar exists
+ * only once the plan has left `building`, and the number in it is the server's
+ * — which is also the number the confirmation is about to ask to have typed.
+ */
+async function buildRenamePlan(titles: string[], affected: number) {
+  await openRenameScope();
+  for (const title of titles) {
+    await page.check(`.scope__item:has-text("${title}") input[type="checkbox"]`);
+  }
+  await page.click('.scope__foot button');
+  await expect.poll(() => page.textContent('.bulkbar__count'), { timeout: 60_000 })
+    .toContain(`${affected} files will be renamed`);
+}
+
+/** Plan → typed confirmation. Opens it; types nothing. */
+async function openRenameConfirm() {
+  await page.click('.bulkbar--apply button:has-text("Apply")');
+  await page.waitForSelector('#rename-typed-count');
 }
 
 /**
@@ -809,5 +927,185 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     await expect.poll(async () => (await indicesNow()).includes(last), { timeout: 10_000 })
       .toBe(true);
     expect((await indicesNow()).length).toBeLessThan(GAP_COUNT / 2);
+  });
+
+  /* ---------------------------------------------------------------------
+     T19 — Bulk rename.
+
+     Nested, because these need a fixture the earlier screens must not see.
+     The occupancy read resolves a title's root from `GET /series/{id}`, and
+     the gaps season confirmation reads that same endpoint for its per-season
+     counts; installed here it reaches the rename scans and nothing before
+     them. The fake answers with one detail whatever id it is asked for, which
+     is why Silo's destinations are checked against Reacher's folder — nothing
+     there matches a Silo proposal, so no flag is invented by the shortcut.
+     --------------------------------------------------------------------- */
+  describe('Bulk rename', () => {
+    beforeAll(() => {
+      sonarr.setSeriesDetail({ id: 1, title: 'Reacher', path: RENAME_ROOT });
+      sonarr.setFilesystem({ [`${RENAME_ROOT}/Season 1/`]: [OCCUPANT] });
+      sonarr.setRenamePreview(renamePreviewFor);
+    });
+
+    it('Rename has zero violations on the picker, with an instance it could not read', async () => {
+      await openRenameScope();
+      // Radarr has answered 401 since the Settings scans, so the warn callout
+      // saying the list is incomplete is part of this surface rather than an
+      // extra one — and it is the surface an operator meets on a bad day.
+      await page.waitForSelector('text=This list is incomplete');
+      await scan('Rename (scope picker, degraded)');
+    });
+
+    it('Rename has zero violations on a flagged preview with a clean list beside it', async () => {
+      await buildRenamePlan(['Reacher', 'Silo', 'Severance'], RENAME_TOTAL);
+
+      // All four derived flags are on screen, which is what makes this the
+      // expensive surface rather than a grid of plain rows.
+      await page.waitForSelector('.pgrid__flag');
+      // And FR5's other half: a title that was asked and had nothing pending.
+      await page.waitForSelector('.clean-list__item');
+      // Headings count as rows, so the announced total is files plus the two
+      // titles that have any, plus the column header.
+      expect(await page.getAttribute('.pgrid', 'aria-rowcount'))
+        .toBe(String(RENAME_TOTAL + 2 + 1));
+
+      await scan('Rename (preview, flagged)');
+    });
+
+    it('Rename has zero violations with the row inspector open', async () => {
+      await buildRenamePlan(['Reacher'], RENAME_FLAGGED);
+      await page.click('.pgrid__body-row >> nth=0');
+      await page.waitForSelector('.inspector .diff');
+      await scan('Rename (inspector open)');
+      await page.keyboard.press('Escape');
+    });
+
+    it('Rename has zero violations in the typed confirmation, in all three states', async () => {
+      await buildRenamePlan(['Reacher', 'Silo'], RENAME_TOTAL);
+      await openRenameConfirm();
+
+      // Nothing typed: the hint states what has to be in the field, and the
+      // button is visibly present and unavailable rather than absent.
+      expect(await page.isDisabled('.modal__foot .btn-danger-solid')).toBe(true);
+      await scan('Rename (confirmation, untouched)');
+
+      // Wrong: `aria-invalid` and a differently-toned hint, which is exactly
+      // the pairing where a contrast regression hides.
+      await page.fill('#rename-typed-count', '13');
+      await expect.poll(() => page.getAttribute('#rename-typed-count', 'aria-invalid'))
+        .toBe('true');
+      await scan('Rename (confirmation, wrong number)');
+
+      await page.fill('#rename-typed-count', String(RENAME_TOTAL));
+      await expect.poll(() => page.isDisabled('.modal__foot .btn-danger-solid')).toBe(false);
+      await scan('Rename (confirmation, matched)');
+
+      await page.keyboard.press('Escape');
+      await expect.poll(() => page.locator('.modal[role="dialog"]').count()).toBe(0);
+    });
+
+    it('states a rename in channels that survive without colour', async () => {
+      await buildRenamePlan(['Reacher'], RENAME_FLAGGED);
+
+      // 1. The changed span is bracketed, not merely tinted. `«…»` is the
+      //    channel that still works in a screenshot printed in black ink.
+      const marks = await page.locator('.pgrid .diff__mark').allTextContents();
+      expect(marks.length).toBeGreaterThan(0);
+      expect(marks.every((mark) => mark.includes('«') && mark.includes('»'))).toBe(true);
+
+      // 2. Every flag says what it is. The badge's colour is a second channel
+      //    and never the only one — a warn tint with no word in it would be
+      //    unreadable to anyone who cannot tell it from the status column.
+      const flags = await page.locator('.pgrid__flag').count();
+      const labels = await page.locator('.pgrid__flag .pgrid__flag-label').allTextContents();
+      expect(flags).toBeGreaterThan(0);
+      expect(labels).toHaveLength(flags);
+      expect(labels.every((label) => label.trim().length > 0)).toBe(true);
+
+      // 3. The inspector states the same change three more ways: a sign per
+      //    line, a spoken label per line, and a sentence for the move.
+      await page.click('.pgrid__body-row >> nth=0');
+      await page.waitForSelector('.inspector .diff');
+      const signs = await page.locator('.inspector .diff__sign').allTextContents();
+      expect(signs).toContain('−');
+      expect(signs).toContain('+');
+      expect(await page.locator('.inspector .diff__row .sr-only').allTextContents())
+        .toEqual(expect.arrayContaining(['Currently at', 'Would become']));
+      // Row one leaves the series root, so the sentence naming the move is
+      // rendered — the channel that still works read aloud.
+      expect(await page.textContent('.inspector .diff__note--move')).toContain('moved');
+
+      await page.keyboard.press('Escape');
+    });
+
+    it('keeps the plan grid to tab stops that do not scale with the plan', async () => {
+      await buildRenamePlan(['Reacher'], RENAME_FLAGGED);
+
+      // One row is reachable, and the checkbox inside a row is not a stop of
+      // its own — 120 rows would otherwise be 240 presses to walk past.
+      expect(await page.locator('.pgrid__body-row[tabindex="0"]').count()).toBe(1);
+      expect(
+        await page.locator('.pgrid__body-row input[type="checkbox"]:not([tabindex="-1"])').count(),
+      ).toBe(0);
+
+      // The stops that remain are per *title* plus the select-all: a bounded
+      // handful, and under virtualization only the rendered ones exist at all.
+      const stops = await page.locator(
+        '.pgrid [tabindex="0"], .pgrid input[type="checkbox"]:not([tabindex="-1"])',
+      ).count();
+      expect(stops, `${stops} tab stops inside a ${RENAME_FLAGGED}-row grid`).toBeLessThan(8);
+
+      // The walk itself, driven with real keys: from the row, Tab never lands
+      // on another row and leaves the grid within those few stops.
+      await page.focus('.pgrid__body-row[tabindex="0"]');
+      for (let i = 0; i < 3; i += 1) {
+        await page.keyboard.press('Tab');
+        const onRow = await page.evaluate(() => Boolean(
+          (document.activeElement as HTMLElement | null)?.closest('.pgrid__body-row'),
+        ));
+        expect(onRow, 'Tab walked onto a second grid row').toBe(false);
+      }
+      expect(await page.evaluate(() => Boolean(
+        (document.activeElement as HTMLElement | null)?.closest('.pgrid'),
+      )), 'Tab never escaped the grid').toBe(false);
+    });
+
+    it('Rename has zero violations on the applied screen', async () => {
+      // The verification re-read answers empty, which is what "this file is no
+      // longer pending a rename" looks like — per-file evidence, not the
+      // command's own opinion of itself (ADR-7).
+      sonarr.setRenamePreview((_query, callIndex) => (callIndex <= 1 ? plainPreview() : []));
+      await buildRenamePlan(['Silo'], RENAME_PLAIN);
+
+      await openRenameConfirm();
+      await page.fill('#rename-typed-count', String(RENAME_PLAIN));
+      await page.click('.modal__foot .btn-danger-solid');
+
+      await page.waitForSelector('.ribbon--done', { timeout: 30_000 });
+      expect(await page.textContent('.tally')).toContain(`${RENAME_PLAIN} renamed`);
+      await scan('Rename (applied)');
+    });
+
+    it('Rename has zero violations on the refusal', async () => {
+      sonarr.setRenamePreview(renamePreviewFor);
+      await buildRenamePlan(['Silo'], RENAME_PLAIN);
+
+      // The library moves between the preview and the apply: same file ids,
+      // different paths. Reinstalling the resolver resets the call counter, so
+      // the drift check is the first read to see the shifted answer.
+      sonarr.setRenamePreview(() => plainPreview(40));
+
+      await openRenameConfirm();
+      await page.fill('#rename-typed-count', String(RENAME_PLAIN));
+      await page.click('.modal__foot .btn-danger-solid');
+
+      await page.waitForSelector('.ribbon--refused', { timeout: 30_000 });
+      // The drifted paths are named, which is the part that makes a refusal
+      // comprehensible rather than merely final.
+      await page.waitForSelector('.refusal__paths li');
+      await scan('Rename (refused on drift)');
+
+      sonarr.setRenamePreview(renamePreviewFor);
+    });
   });
 });

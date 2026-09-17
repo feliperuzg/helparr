@@ -76,6 +76,9 @@ export default function ApplyProgress({
           <div
             className="progress"
             role="progressbar"
+            // Named as well as valued: `aria-valuetext` says what the number
+            // means, and without a name a reader announces the number alone.
+            aria-label={applying ? 'Rename in progress' : 'Rename results reported'}
             aria-valuemin={0}
             aria-valuemax={summary.sent}
             aria-valuenow={summary.resolved}

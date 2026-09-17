@@ -41,6 +41,8 @@ export default defineConfig({
           '**/search-perf.test.ts',
           '**/gaps-interaction.test.ts',
           '**/gaps-perf.test.ts',
+          '**/rename-interaction.test.ts',
+          '**/rename-perf.test.ts',
         ]),
     ],
     // The suite opens real encrypted SQLite files and real loopback HTTP
