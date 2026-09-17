@@ -367,8 +367,35 @@ async function spikeArr(kind, baseUrl, apiKey) {
       console.log(`  → If this carries the old and new path per file, OQ-6 is answered by history:`);
       console.log(`    poll the command to completion, then read back the per-file truth (NFR7).`);
     } else {
-      console.log(`  → Without a rename event here, per-file outcomes must come from`);
-      console.log(`    re-running the preview after apply and diffing (the expensive option).`);
+      /*
+       * An unfiltered page only shows what happened RECENTLY. An instance that
+       * has simply not renamed anything lately looks identical to one whose API
+       * has no rename event at all — and those two demand different designs for
+       * OQ-6. The eventType filter separates them.
+       *
+       * The id is swept rather than hardcoded: the enum differs between Sonarr
+       * and Radarr and is not published on the instance, so guessing 6 or 7 is
+       * how a spike quietly reports a wrong answer.
+       */
+      console.log('');
+      console.log(`  none in the recent window — sweeping the eventType filter for an older one…`);
+      let found = null;
+      for (let eventType = 1; eventType <= 10 && !found; eventType += 1) {
+        const filtered = await probe(baseUrl, apiKey, 'api/v3/history', { page: 1, pageSize: 5, eventType });
+        const hits = (filtered.body?.records ?? []).filter((r) => /rename/i.test(String(r.eventType)));
+        if (hits.length) found = { eventType, hits };
+      }
+
+      if (found) {
+        console.log(`  rename-shaped eventType EXISTS: ${found.hits[0].eventType} (eventType=${found.eventType})`);
+        console.log(`  data keys on one: ${Object.keys(found.hits[0]?.data ?? {}).join(', ')}`);
+        console.log(`  → The API carries it; the recent window just had no renames. OQ-6 is`);
+        console.log(`    answerable from history here too.`);
+      } else {
+        console.log(`  no rename eventType in ids 1–10 — either this instance has never renamed`);
+        console.log(`  a file, or the API has no such event. Per-file outcomes would have to come`);
+        console.log(`  from re-running the preview after apply and diffing.`);
+      }
     }
   } else {
     console.log(`  ✗ api/v3/history HTTP ${history.status} — ${history.detail ?? 'unexpected body'}`);
