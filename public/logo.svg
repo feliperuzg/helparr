@@ -1,32 +1,79 @@
-<!--
-  The helparr mark: four streams stepping down into one stack.
-
-  Several Sonarr/Radarr/Prowlarr instances read into a single list, drawn as
-  four ribbons that each fold down a level as they travel right and settle
-  interlocked. Vector, so it stays sharp at 16px where a rasterised logo turns
-  to mush.
-
-  This file is the SOURCE. Every shipped icon (public/icon.png,
-  public/icon-1024.png, src/app/icon.png, src/app/apple-icon.png,
-  src/app/favicon.ico) is rendered from it by `npm run build:icons`. Edit
-  here, re-run that, commit the lot - never hand-edit a PNG, or the set drifts.
-
-  Colours are the brand tokens from src/app/globals.css:
-    background #0F172A  (color-bg-raw)
-    ribbons    #22C55E  (color-accent-raw)
-
-  Each ribbon is a filled path rather than a stroke, because the ends are cut
-  on a slant and no stroke linecap produces an angled end. The shape is sheared
-  by 46 across its 76 thickness, so every feature on the bottom edge sits 46
-  right of its partner on the top edge - including the fold.
-
-  Geometry: bounding box 632 x 520 centred on (512, 512), inside the safe
-  area every platform mask crops to.
--->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="helparr">
-  <rect width="1024" height="1024" rx="224" fill="#0F172A"/>
-  <path fill="#22C55E" d="M196 252 H400 C452 252 452 300 504 300 H782 L828 376 H550 C498 376 498 328 446 328 H242 Z"/>
-  <path fill="#22C55E" d="M196 384 H418 C470 384 470 432 522 432 H782 L828 508 H568 C516 508 516 460 464 460 H242 Z"/>
-  <path fill="#22C55E" d="M196 516 H436 C488 516 488 564 540 564 H782 L828 640 H586 C534 640 534 592 482 592 H242 Z"/>
-  <path fill="#22C55E" d="M196 648 H454 C506 648 506 696 558 696 H782 L828 772 H604 C552 772 552 724 500 724 H242 Z"/>
+  <!--
+    The helparr mark: four ribbons that each fold up a level as they travel
+    right, stacked into one block.
+
+    Several Sonarr/Radarr/Prowlarr instances read into a single list. This is a
+    vector redraw of the chosen concept art, measured off it rather than
+    reinterpreted: the tile colour, the lime to green ramp, the 74-unit pitch,
+    the 34-unit thickness, the 16-unit rise of each fold and the slanted end
+    cuts are all sampled values, scaled by 1024/694 so the art's inset tile
+    becomes a full-bleed icon.
+
+    This file is the SOURCE. Every shipped icon (public/icon.png,
+    public/icon-1024.png, src/app/icon.png, src/app/apple-icon.png,
+    src/app/favicon.ico) is rendered from it by `npm run build:icons`. Edit
+    here, re-run that, commit the lot - never hand-edit a PNG, or the set drifts.
+
+    The palette is the mark's own, NOT the UI tokens in src/app/globals.css.
+    The app chrome is slate (color-bg-raw #0F172A) with a single green accent;
+    the icon is teal with a four-step ramp. They are deliberately different
+    surfaces - an icon competes with other icons, not with the app's own chrome.
+
+    Three things are regularised against the source art, because a logo has to
+    be repeatable where a render does not:
+
+      - Every fold sits at the same x. The art drifts by up to 38 units between
+        ribbons; the two cleanest ribbons agree within 3, so they set the line.
+      - Every end cut runs at the same angle, including the top ribbon's, whose
+        cut the art draws shallower than its siblings'.
+      - The top ribbon keeps the art's flat top edge. That is the one
+        irregularity worth preserving: it turns the lime bar into a single rule
+        across the mark, so the stack reads as a masthead over three rows
+        instead of four equal slats.
+
+    Each ribbon is a filled path rather than a stroke, because the ends are cut
+    on a slant and no stroke linecap produces an angled end. The shadows are the
+    swept region of each ribbon's lower-right silhouette, displaced 760 along
+    the diagonal and clipped to the tile - a hard long shadow, not a blur, so it
+    survives being rasterised at 16px.
+
+    Geometry: mark 566 x 401 centred on (512, 512).
+
+    This block sits INSIDE the element on purpose. libvips sniffs the format
+    from the first few hundred bytes, so prose above the open tag pushes `<svg`
+    out of that window and `npm run build:icons` dies with the unhelpful
+    "Input file contains unsupported image format".
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1A454E"/><stop offset="1" stop-color="#123640"/>
+    </linearGradient>
+    <linearGradient id="r1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#C4DE6B"/><stop offset="1" stop-color="#BCD768"/>
+    </linearGradient>
+    <linearGradient id="r2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#77AF5F"/><stop offset="1" stop-color="#8AC26D"/>
+    </linearGradient>
+    <linearGradient id="r3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#589953"/><stop offset="1" stop-color="#63AF5E"/>
+    </linearGradient>
+    <linearGradient id="r4" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3C884B"/><stop offset="1" stop-color="#459F57"/>
+    </linearGradient>
+    <clipPath id="tileClip"><rect width="1024" height="1024" rx="236"/></clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="236" fill="url(#tile)"/>
+  <g clip-path="url(#tileClip)">
+    <g fill="#05161C" opacity="0.34">
+      <path d="M795 311 L763 361 L568 361 L515 385 L229 385 L989 1145 L1275 1145 L1328 1121 L1523 1121 L1555 1071 Z"/>
+      <path d="M795 420 L763 470 L568 470 L515 494 L229 494 L989 1254 L1275 1254 L1328 1230 L1523 1230 L1555 1180 Z"/>
+      <path d="M795 529 L763 579 L568 579 L515 603 L229 603 L989 1363 L1275 1363 L1328 1339 L1523 1339 L1555 1289 Z"/>
+      <path d="M795 638 L763 688 L568 688 L515 712 L229 712 L989 1472 L1275 1472 L1328 1448 L1523 1448 L1555 1398 Z"/>
+    </g>
+    <path fill="url(#r1)" d="M276 311 L795 311 L763 361 L568 361 C549 361 534 385 515 385 L229 385 Z"/>
+    <path fill="url(#r2)" d="M261 444 L432 444 C448 444 463 420 479 420 L795 420 L763 470 L568 470 C549 470 534 494 515 494 L229 494 Z"/>
+    <path fill="url(#r3)" d="M261 553 L432 553 C448 553 463 529 479 529 L795 529 L763 579 L568 579 C549 579 534 603 515 603 L229 603 Z"/>
+    <path fill="url(#r4)" d="M261 662 L432 662 C448 662 463 638 479 638 L795 638 L763 688 L568 688 C549 688 534 712 515 712 L229 712 Z"/>
+  </g>
 </svg>

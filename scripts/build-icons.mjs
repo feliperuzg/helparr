@@ -31,17 +31,23 @@ import sharp from 'sharp';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = path.join(ROOT, 'public', 'logo.svg');
 
-/** The background token, repeated here only to fill the corners for apple-icon. */
-const BACKGROUND = '#0F172A';
+/**
+ * Fills the corners for apple-icon. The tile in the source is a diagonal
+ * gradient, so this is its midpoint rather than a token: the corner slivers it
+ * paints are a few units off at the extreme tips, and iOS's squircle mask cuts
+ * exactly those tips off. It is NOT a brand token from globals.css - see the
+ * palette note in public/logo.svg.
+ */
+const BACKGROUND = '#163F48';
 
 /**
  * Fraction of the source square the favicon keeps. Smaller = tighter crop.
  *
- * 0.68 was picked by rendering 0.84 / 0.76 / 0.68 / 0.62 at 16px and looking.
- * Above it the four ribbons collapse into a green smear; below it the slanted
- * ends clip against the frame.
+ * 0.62 was picked by rendering 0.80 / 0.70 / 0.62 / 0.55 at 16px and looking.
+ * Above it the four ribbons collapse into a green smear; at 0.55 the slanted
+ * ends clip against the frame, since the mark is 566 wide on a 1024 source.
  */
-const FAVICON_CROP = 0.68;
+const FAVICON_CROP = 0.62;
 
 /**
  * Sizes packed into favicon.ico: 16 is the legacy tab, 32 the retina tab, and
