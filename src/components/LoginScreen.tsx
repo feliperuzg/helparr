@@ -115,7 +115,9 @@ export default function LoginScreen() {
 
         <p className="field__hint" style={{ marginTop: 'var(--space-4)' }}>
           First run? Set <code className="mono">HELPARR_INITIAL_PASSWORD</code> before starting the
-          server; helparr hashes it on first boot and never stores the plaintext.
+          server; helparr hashes it on first boot and never stores the plaintext. Change it
+          under Settings once you are in — after that the variable is inert.
+          Forgot it? Restart with <code className="mono">HELPARR_PASSWORD_RESET=1</code>.
         </p>
       </div>
     </main>

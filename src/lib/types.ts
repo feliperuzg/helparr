@@ -50,10 +50,32 @@ export interface InstanceHealthDto {
   observedAt: string;
 }
 
-export interface HealthResponse {
+/**
+ * The one minimum length for the operator password (ADR-7).
+ *
+ * It lives in this shared module rather than in `@/server/config` because the
+ * change-password form has to state the rule before the server gets a chance to
+ * refuse it, and `@/server/config` is `server-only`. `MIN_INITIAL_PASSWORD_LENGTH`
+ * is an alias of this value, so provisioning and rotation cannot drift apart.
+ */
+export const MIN_OPERATOR_PASSWORD_LENGTH = 8;
+
+/** What the probe fan-out itself produces — instance state and nothing else. */
+export interface InstanceHealthSummary {
   instances: InstanceHealthDto[];
   /** Count of enabled instances not in `ok` — drives the shell badge. */
   degradedCount: number;
+}
+
+export interface HealthResponse extends InstanceHealthSummary {
+  /**
+   * True while the stored operator password is still the value
+   * `HELPARR_INITIAL_PASSWORD` supplied (REQ-AUTH-011). It rides this payload
+   * rather than a route of its own because the shell already polls health every
+   * 60 seconds, so the notice appears and clears on the poll the operator's
+   * browser is making anyway.
+   */
+  bootstrapCredential: boolean;
 }
 
 /**

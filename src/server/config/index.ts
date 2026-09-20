@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 
 import { z } from 'zod';
 
+import { MIN_OPERATOR_PASSWORD_LENGTH } from '@/lib/types';
+
 /**
  * The single place helparr reads its environment (REQ-DEPLOY-008 / NFR2).
  *
@@ -38,7 +40,12 @@ export const DEFAULT_DB_PATH = './data/helparr.db';
 export const DEFAULT_LOG_LEVEL: LogLevel = 'info';
 export const DEFAULT_QUEUE_REFRESH_SECONDS = 30;
 export const MIN_QUEUE_REFRESH_SECONDS = 5;
-export const MIN_INITIAL_PASSWORD_LENGTH = 8;
+/**
+ * Re-exported rather than redeclared. The browser-side change-password form
+ * needs the same number and cannot import a `server-only` module, so the value
+ * itself lives in `@/lib/types` and every consumer sees one rule (ADR-7).
+ */
+export const MIN_INITIAL_PASSWORD_LENGTH = MIN_OPERATOR_PASSWORD_LENGTH;
 
 /** Where the encryption key is expected to come from. Resolved by `@/server/crypto`. */
 export type EncryptionKeySource = 'env' | 'file' | 'none';
@@ -52,6 +59,12 @@ export interface RuntimeConfig {
   basePath: string;
   /** First-run bootstrap only; ignored once an operator password exists. */
   initialPassword: string | null;
+  /**
+   * Deliberate recovery from a forgotten password: lets `initialPassword` win
+   * once more, at the next start. Separate from `initialPassword` on purpose —
+   * the bootstrap value alone must never be able to undo a rotation.
+   */
+  passwordReset: boolean;
   encryptionKeySource: EncryptionKeySource;
   encryptionKeyFilePath: string | null;
 }
@@ -84,6 +97,7 @@ const schema = z
     HELPARR_ENCRYPTION_KEY: z.string().optional(),
     HELPARR_ENCRYPTION_KEY_FILE: optionalText,
     HELPARR_INITIAL_PASSWORD: z.string().optional(),
+    HELPARR_PASSWORD_RESET: optionalText,
     HELPARR_LOG_LEVEL: optionalText,
     HELPARR_QUEUE_REFRESH_SECONDS: optionalText,
     HELPARR_BASE_PATH: optionalText,
@@ -149,6 +163,26 @@ function parseInitialPassword(raw: string | undefined, problems: string[]): stri
   return raw;
 }
 
+const TRUTHY = ['1', 'true', 'yes', 'on'];
+const FALSY = ['0', 'false', 'no', 'off'];
+
+/**
+ * The recovery flag is strict about its values rather than treating any
+ * non-empty string as true. `HELPARR_PASSWORD_RESET=false` reads as an
+ * instruction *not* to reset in every other tool an operator uses, and the one
+ * place that must not surprise them is the one that overwrites their password.
+ */
+function parsePasswordReset(raw: string | undefined, problems: string[]): boolean {
+  if (raw === undefined) return false;
+  const lowered = raw.toLowerCase();
+  if (TRUTHY.includes(lowered)) return true;
+  if (FALSY.includes(lowered)) return false;
+  problems.push(
+    `HELPARR_PASSWORD_RESET is "${raw}"; expected one of ${[...TRUTHY, ...FALSY].join(', ')}`,
+  );
+  return false;
+}
+
 function parseKeySource(
   key: string | undefined,
   keyFile: string | undefined,
@@ -203,6 +237,7 @@ function build(env: NodeJS.ProcessEnv): RuntimeConfig {
     queueRefreshSeconds: parseRefreshSeconds(raw.HELPARR_QUEUE_REFRESH_SECONDS, problems),
     basePath: parseBasePath(raw.HELPARR_BASE_PATH, problems),
     initialPassword: parseInitialPassword(raw.HELPARR_INITIAL_PASSWORD, problems),
+    passwordReset: parsePasswordReset(raw.HELPARR_PASSWORD_RESET, problems),
     encryptionKeySource: source,
     encryptionKeyFilePath: filePath,
   };

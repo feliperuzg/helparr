@@ -78,3 +78,18 @@ export function rateLimitSource(headers: Headers): string {
   if (forwarded) return forwarded.split(',')[0]!.trim();
   return headers.get('x-real-ip') ?? 'unknown';
 }
+
+/**
+ * The same caller, in a separate throttle namespace for password changes
+ * (ADR-6).
+ *
+ * `recordAttempt(source, true)` clears the failure window for its source, which
+ * is right for login and wrong for anything else sharing that source: a
+ * successful password change under the bare address would wipe an in-progress
+ * login throttle, handing anyone with a session a throttle bypass. The
+ * `login_attempt.source` column is free-text, so the two windows cost nothing
+ * but this prefix.
+ */
+export function passwordChangeSource(headers: Headers): string {
+  return `pwchange:${rateLimitSource(headers)}`;
+}

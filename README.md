@@ -185,7 +185,8 @@ required.
 |---|---|---|---|
 | `HELPARR_ENCRYPTION_KEY` | **yes** | — | Encrypts the SQLite database at rest, including every stored API key. Minimum 16 characters. helparr refuses to start without it rather than silently writing credentials in the clear. |
 | `HELPARR_ENCRYPTION_KEY_FILE` | — | — | The same key, read from a file instead — the shape Docker secrets and systemd `LoadCredential` produce. Set exactly one of the two; both at once is refused rather than resolved by precedence. One trailing newline is stripped. |
-| `HELPARR_INITIAL_PASSWORD` | first run | — | Bootstraps the operator password. Read once, hashed with argon2id, then ignored — it is not a standing source of truth. Minimum 8 characters. |
+| `HELPARR_INITIAL_PASSWORD` | first run | — | The *setup* password: how you get in the first time, not how you stay in. Read once, hashed with argon2id, then inert — a restart with it still set does not overwrite a password you changed later. Change it under **Settings → Operator password** and the value here stops mattering. Minimum 8 characters. |
+| `HELPARR_PASSWORD_RESET` | no | `false` | Recovery for a forgotten password. On the next start, **and only once per time you set it**, the stored password is overwritten with `HELPARR_INITIAL_PASSWORD`. Accepts `1`/`true`/`yes`/`on` and their negatives — anything else is refused by name at startup rather than guessed at. Set it, restart, sign in, change the password, then **remove the variable**: removing it is what re-arms recovery for next time. |
 | `HELPARR_DB_PATH` | no | `./data/helparr.db` | Where the encrypted database lives. Point this at your mounted volume — the *directory*, so the `-wal` and `-shm` sidecars stay beside the file. |
 | `HELPARR_BASE_PATH` | no | *(none)* | Serve under a sub-path (e.g. `/helparr`) behind a reverse proxy. Baked at build time, not runtime. |
 | `HELPARR_LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error`. Secrets are redacted at every level. |
@@ -216,6 +217,42 @@ Generate one with:
 openssl rand -base64 32
 ```
 
+### The operator password
+
+`HELPARR_INITIAL_PASSWORD` gets you in the first time. It is not where the
+password lives: helparr hashes it on first boot and stores the hash, and from
+then on the variable is inert. Change the password under **Settings → Operator
+password** — the form asks for the current one, and changing it signs out every
+other device while keeping you signed in on the one you used.
+
+Until you do, a banner says so on every screen. That is deliberate: a password
+sitting in a compose file is readable by anything that can read the file.
+
+**If you forget it**, recovery runs through the environment, because helparr has
+no email to send you and the database is encrypted, so there is nothing to edit
+by hand:
+
+```bash
+# 1. set both, in the .env file beside your compose file
+HELPARR_INITIAL_PASSWORD=a-temporary-password
+HELPARR_PASSWORD_RESET=1
+
+# 2. restart. The log says it reset, and every existing session is dead.
+docker compose up -d
+
+# 3. sign in, change the password under Settings, then REMOVE
+#    HELPARR_PASSWORD_RESET and restart again.
+```
+
+Step 3 is the part that matters. The reset fires **once per time you ask for
+it**, so a flag left behind will not quietly undo your next password change on
+some later restart — but it also will not work a second time until you remove
+it and set it again. helparr logs a warning on every start while the flag is
+still there, naming the time it was already applied.
+
+This cedes no security you had: anyone who can set environment variables on the
+container can already read the database key.
+
 ---
 
 ## Install (development)
@@ -234,7 +271,9 @@ npm run dev
 ```
 
 Open <http://localhost:3000>, sign in with `HELPARR_INITIAL_PASSWORD`, and add
-your first instance under **Settings**.
+your first instance under **Settings**. helparr will keep a banner up until you
+replace that setup password under **Settings → Operator password** — it is
+sitting in a file in plaintext, and anyone who can read the file is you.
 
 `.env.local` is gitignored. Keep it that way.
 

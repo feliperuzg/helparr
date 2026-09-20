@@ -52,10 +52,26 @@ services:
       HELPARR_ENCRYPTION_KEY: ${HELPARR_ENCRYPTION_KEY:?set HELPARR_ENCRYPTION_KEY in a .env file beside this compose file}
 
       # ---- First run only ------------------------------------------------
-      # Sets the operator password the first time helparr starts. Ignored once
-      # a password exists, so leaving it here cannot silently reset a password
-      # you later changed in the UI. Minimum 8 characters.
+      # The SETUP password: how you get in the first time, not where the
+      # password lives. helparr hashes it on first start and the variable is
+      # inert afterwards, so leaving it here cannot silently reset a password
+      # you later changed under Settings. Minimum 8 characters.
+      #
+      # Change it in the UI (Settings -> Operator password) as soon as you are
+      # in. helparr shows a banner until you do: a password in a file is
+      # readable by anything that can read the file.
       HELPARR_INITIAL_PASSWORD: ${HELPARR_INITIAL_PASSWORD:?set HELPARR_INITIAL_PASSWORD in a .env file beside this compose file}
+
+      # ---- Forgot the password? -------------------------------------------
+      # Uncomment, restart once, sign in with HELPARR_INITIAL_PASSWORD above,
+      # change the password under Settings, then COMMENT THIS BACK OUT and
+      # restart again.
+      #
+      # It fires at most once per time you set it, so a line left uncommented
+      # cannot undo your next password change on some later restart — but it
+      # also will not work a second time until you remove it and set it again.
+      # helparr warns on every start while it is still here.
+      # HELPARR_PASSWORD_RESET: "1"
 
       # ---- Optional ------------------------------------------------------
       # debug | info | warn | error. Credentials are redacted at every level.

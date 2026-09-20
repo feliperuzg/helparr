@@ -129,6 +129,19 @@ export const api = {
 
   health: () => request<HealthResponse>('/api/health'),
 
+  /**
+   * `bounceOn401: false` is load-bearing. The rotation route answers 401 for a
+   * wrong *current password*, and the generic handler reads every 401 as an
+   * expired session — so the default would throw the operator out to `/login`
+   * for a typo, discarding the form they were filling in.
+   */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>(
+      '/api/auth/password',
+      { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) },
+      false,
+    ),
+
   queue: (signal?: AbortSignal) => request<QueueResponse>('/api/queue', { signal }),
 
   // Every flag is spelled out on the wire. The route rejects an omitted one

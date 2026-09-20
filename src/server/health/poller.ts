@@ -1,6 +1,6 @@
 import 'server-only';
 
-import type { HealthResponse, HealthState, InstanceHealthDto } from '@/lib/types';
+import type { HealthState, InstanceHealthDto, InstanceHealthSummary } from '@/lib/types';
 import type { ProbeResult } from '@/server/clients/types';
 import { enabledClients, recordHealth } from '@/server/instances/registry';
 import { fireOn, isCircuitOpen, retryAt } from '@/server/resilience/breaker';
@@ -32,7 +32,7 @@ function isFailure(result: ProbeResult): boolean {
   return result.state === 'unreachable' || result.state === 'degraded';
 }
 
-export async function probeAll(): Promise<HealthResponse> {
+export async function probeAll(): Promise<InstanceHealthSummary> {
   const targets = enabledClients();
   const observedAt = new Date().toISOString();
 

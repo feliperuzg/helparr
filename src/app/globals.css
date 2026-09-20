@@ -299,6 +299,33 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
   height: 100%;
 }
 
+/* The provisional-credential notice is a real grid row spanning both columns,
+   the way the brand row already spans the top — not an overlay and not a strip
+   inside <main>. It must not sit on top of anything, because it is a nudge and
+   nothing below it is allowed to be blocked or dimmed (REQ-AUTH-011). The row
+   only exists while the banner does, so the default layout is untouched. */
+.shell.has-banner {
+  grid-template-rows: var(--nav-height) auto minmax(0, 1fr);
+  grid-template-areas: "brand topbar" "banner banner" "sidebar main";
+}
+
+/* Warn tokens rather than an info tint: the stylesheet has no info tint — the
+   `info` Callout is the untinted default — and a full-width strip the colour of
+   the surface behind it is not a notice. Warn is also the tone this app already
+   uses for "worth acting on, nothing is broken". */
+.shell-banner {
+  grid-area: banner;
+  display: flex; align-items: center; gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-status-warn-bg);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warn-raw) 30%, transparent);
+  font-size: var(--text-sm);
+}
+.shell-banner > svg { color: var(--color-status-warn); flex: none; }
+.shell-banner__text { flex: 1; min-width: 220px; }
+.shell-banner__actions { display: flex; align-items: center; gap: var(--space-2); }
+
 .brand {
   grid-area: brand;
   display: flex; align-items: center; gap: var(--space-2);
@@ -2226,6 +2253,7 @@ select.input {
   :root { --sidebar-width: 0px; }
 
   .shell { grid-template-columns: minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
+  .shell.has-banner { grid-template-areas: "topbar" "banner" "main"; }
   .brand { display: none; }
   .sidebar {
     position: fixed; z-index: 40;

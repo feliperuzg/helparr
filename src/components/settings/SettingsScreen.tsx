@@ -7,6 +7,7 @@ import Icon from '../Icon';
 import {
   Callout, EmptyState, KV, Modal, ScreenHead, StatusBadge, ToastStack, useToasts, type Tone,
 } from '../ui';
+import ChangePasswordCard from './ChangePasswordCard';
 import ConnectionFields, { EMPTY_CREDENTIAL, toCredential, type CredentialDraft } from './ConnectionFields';
 import { useConnectionTest } from './useConnectionTest';
 import { api, ApiError } from '@/lib/api';
@@ -91,6 +92,14 @@ export default function SettingsScreen({ initiallyAdding = false }: { initiallyA
                 ))}
               </div>
             )}
+          </section>
+
+          {/* Between Connections and About: this is a thing the operator
+              *does*, so it belongs above the read-only facts, and below the
+              instance work that is why they usually come to this screen. */}
+          <section className="section" id="operator-password">
+            <h2 className="section__title">Operator password</h2>
+            <ChangePasswordCard onToast={push} />
           </section>
 
           <section className="section">

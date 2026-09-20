@@ -269,6 +269,30 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 5,
+    name: 'operator-reset-marker',
+    up: (db) => {
+      db.exec(`
+        -- Records that the deliberate recovery flag has already been honoured
+        -- (REQ-AUTH-008, ADR-5).
+        --
+        -- "At most once per time it is requested" cannot be enforced by reading
+        -- the environment alone, because the environment does not change between
+        -- restarts: a HELPARR_PASSWORD_RESET left in a compose file would
+        -- re-reset the password on every boot, which is exactly the failure mode
+        -- the inertness rule exists to prevent, wearing an opt-in costume.
+        --
+        -- Cleared by the flag's ABSENCE, not by a password write. Clearing it on
+        -- every write would mean a flag left in place undoes the operator's next
+        -- rotation on the restart after it — the same foot-gun one level down.
+        -- Removing the variable is something the operator does deliberately, so
+        -- it is the honest signal that the standing request is over; requesting a
+        -- second recovery later then works without any manual cleanup.
+        ALTER TABLE operator ADD COLUMN reset_consumed_at TEXT;
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database): number {

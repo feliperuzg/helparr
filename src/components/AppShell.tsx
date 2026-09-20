@@ -145,8 +145,20 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const degraded = health.data?.degradedCount ?? 0;
   const current = NAV.find((n) => (n.end ? pathname === n.to : pathname.startsWith(n.to)));
 
+  /**
+   * REQ-AUTH-011 / FR9. Dismissal is component state, not `localStorage` —
+   * deliberately unlike `SetupNudge`, which is this codebase's only other
+   * dismissible notice and remembers forever. FR9 says the system *shall* tell
+   * the operator while the bootstrap value is in force, and one click silencing
+   * that permanently would read as contradicting the requirement it implements.
+   * So it goes away for this session and comes back at the next sign-in, for as
+   * long as the condition holds.
+   */
+  const [credentialNoticeDismissed, setCredentialNoticeDismissed] = useState(false);
+  const showCredentialNotice = health.data?.bootstrapCredential === true && !credentialNoticeDismissed;
+
   return (
-    <div className={`shell${navCollapsed ? ' is-nav-collapsed' : ''}`}>
+    <div className={`shell${navCollapsed ? ' is-nav-collapsed' : ''}${showCredentialNotice ? ' has-banner' : ''}`}>
       <a className="skip-link" href="#main">Skip to content</a>
 
       <div className="brand">
@@ -178,6 +190,30 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </button>
         <LogoutButton />
       </header>
+
+      {showCredentialNotice ? (
+        <div className="shell-banner" role="status">
+          <Icon name="alert" size={14} />
+          <span className="shell-banner__text">
+            Still using the setup password from{' '}
+            <code className="mono">HELPARR_INITIAL_PASSWORD</code>. Anyone who can read your
+            compose file can sign in as you.
+          </span>
+          <span className="shell-banner__actions">
+            <Link href="/settings#operator-password" className="btn btn-outline btn-sm">
+              Change it
+              <Icon name="arrowRight" size={12} />
+            </Link>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setCredentialNoticeDismissed(true)}
+            >
+              Dismiss
+            </button>
+          </span>
+        </div>
+      ) : null}
 
       {/* `drawer &&`, not just `navOpen`: the scrim is positioned only inside
           the mobile media query, so widening the window with the drawer open
