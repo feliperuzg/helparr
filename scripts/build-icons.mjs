@@ -134,9 +134,18 @@ async function main() {
   const base = await render(svg, 1024).png().toBuffer();
   const side = Math.round(1024 * FAVICON_CROP);
   const inset = Math.round((1024 - side) / 2);
+  // `flatten` composites the rounded corners onto the background and drops the
+  // alpha channel with them, so sharp writes a 24-bit RGB PNG. Next decodes
+  // `src/app/favicon.ico` at build time with a decoder that accepts RGBA only,
+  // and fails the whole build with "The PNG is not in RGBA format!" — a break
+  // that no test lane except `test:bundle`/`test:e2e`/`test:a11y` reaches,
+  // because only those run `next build`. `ensureAlpha` puts an opaque alpha
+  // channel back: same pixels, and it makes the 32bpp the ICO directory
+  // declares below true rather than aspirational.
   const cropped = await sharp(base)
     .extract({ left: inset, top: inset, width: side, height: side })
     .flatten({ background: BACKGROUND })
+    .ensureAlpha()
     .png()
     .toBuffer();
 
