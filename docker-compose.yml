@@ -13,14 +13,24 @@
 
 services:
   helparr:
-    image: helparr:local
-    # Or build it here instead of pulling:
+    # Published multi-arch: the same tag resolves to amd64 on an Intel NAS and
+    # to arm64 on Apple silicon, so this line is identical on both. The package
+    # is private during internal testing — `docker login ghcr.io` with a token
+    # carrying `read:packages` before the first pull, or this fails as
+    # `denied`. See the README's Docker section.
+    #
+    # `:main` is the current build of the default branch. `:latest` is only
+    # published on a version tag, and no version tag exists yet, so naming
+    # `:latest` here would fail with `manifest unknown`.
+    image: ghcr.io/feliperuzg/helparr:main
+    # Or build it here instead of pulling. This is not just an offline escape
+    # hatch: the published image is the empty-base-path build, and basePath is
+    # compiled in, so serving helparr under a subpath REQUIRES building your
+    # own. Startup refuses a mismatch rather than serving an app whose assets
+    # all 404.
     #   build:
     #     context: .
     #     args:
-    #       # Only if helparr is served under a subpath. It is compiled into
-    #       # the build and cannot be changed afterwards — startup refuses a
-    #       # mismatch rather than serving an app whose assets all 404.
     #       HELPARR_BASE_PATH: /helparr
     container_name: helparr
     restart: unless-stopped

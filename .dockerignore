@@ -34,6 +34,11 @@ arx
 AGENTS.md
 CLAUDE.md
 
+# The workflow that builds this image is not an input to it. Excluded so that
+# editing the pipeline does not invalidate the `COPY . .` layer and force a full
+# npm ci + next build on both architectures for a YAML comment (T1).
+.github
+
 # Test lanes run in CI against the working tree, not inside the image.
 test
 vitest.config.ts

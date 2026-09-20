@@ -151,9 +151,14 @@ the kind of thing only running it finds — which is the argument for this phase
 ### What a first release still needs
 
 - the two bugs above, plus whatever this phase turns up
-- a published image, so installing stops meaning building
 - a tag and a changelog: `package.json` still reads `0.1.0`,
-  and nothing has ever been released under it
+  and nothing has ever been released under it. Until that tag exists the
+  published image has no `:latest` and no version tag — only `:main`.
+- a published image. Half done: CI now publishes
+  `ghcr.io/feliperuzg/helparr` for both architectures, but the package is
+  private, so a tester still needs a token and a `docker login` before they can
+  pull. Making it public is a one-way door and belongs to the release, not to
+  this phase.
 
 ---
 
@@ -164,6 +169,10 @@ the kind of thing only running it finds — which is the argument for this phase
   its API key
 - Native modules are compiled on install (`better-sqlite3-multiple-ciphers`,
   `argon2`), so a toolchain is needed: build-essential/Xcode CLI tools + Python
+
+None of that applies to the container: the published image already contains the
+compiled modules for its architecture, so a Docker host needs no Node, no
+compiler and no Python. See [Docker](#docker).
 
 ---
 
@@ -233,8 +242,12 @@ your first instance under **Settings**.
 
 ## Deploy
 
-Both targets come from the same `output: 'standalone'` build — there is no
-separate server bundle to maintain. One command produces both:
+Container is the short path — the image is published, for `linux/amd64` and
+`linux/arm64` under one tag, so there is nothing to compile. Bare metal builds
+from source. Both targets come from the same `output: 'standalone'` build,
+though: there is no separate server bundle to maintain.
+
+If you are building rather than pulling, one command produces both artifacts:
 
 ```bash
 npm run package     # the standalone bundle on this host, and the helparr:local image
@@ -287,16 +300,42 @@ install -d -o helparr -g helparr -m 0750 /var/lib/helparr
 
 ### Docker
 
-```bash
-npm run build:image                       # → helparr:local
+The image is published to the GitHub Container Registry as
+`ghcr.io/feliperuzg/helparr`, built for `linux/amd64` and `linux/arm64` and
+served from one tag — the same line works on an Intel NAS and on Apple silicon,
+and you never pick an architecture.
 
+**The package is private during internal testing, so the pull is
+authenticated.** Take a GitHub personal access token (classic) with the
+`read:packages` scope, and log in once:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+Without that, `docker pull` fails with `denied` — which reads like the tag does
+not exist rather than like you are not logged in.
+
+```bash
 docker run -d --name helparr \
   -p 3000:3000 \
   -v helparr-data:/data \
   -e HELPARR_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   -e HELPARR_INITIAL_PASSWORD='replace-me' \
-  helparr:local
+  ghcr.io/feliperuzg/helparr:main
 ```
+
+Which tag:
+
+| Tag | What it is |
+|---|---|
+| `main` | The current build of the default branch. What internal testing runs. |
+| `sha-<short>` | One specific commit. Use it to pin, or to go back to a build that worked. |
+| `<version>`, `latest` | Published on a `v*` git tag only. **No version tag exists yet**, so `:latest` does not resolve at all — asking for it fails with `manifest unknown`. |
+
+If you would rather build it yourself, `npm run build:image` still produces
+`helparr:local` and every command below works the same with that tag
+substituted.
 
 [`docker-compose.yml`](docker-compose.yml) is a worked example for dropping
 helparr beside an existing *arr stack. It contains no secrets and is not meant
@@ -311,7 +350,7 @@ it. Give it the right owner first:
 
 ```bash
 sudo install -d -o 1001 -g 1001 -m 0750 /srv/helparr
-docker run -d --name helparr -p 3000:3000 -v /srv/helparr:/data … helparr:local
+docker run -d --name helparr -p 3000:3000 -v /srv/helparr:/data … ghcr.io/feliperuzg/helparr:main
 ```
 
 `1001` is the uid the image creates and runs as. `HELPARR_DB_PATH` defaults to
@@ -328,11 +367,22 @@ be baked into an image layer.
 Every one of those claims is checked, against a real container, by:
 
 ```bash
-npm run verify:image
+npm run verify:image                                       # helparr:local
+
+IMAGE=ghcr.io/feliperuzg/helparr:main npm run verify:image  # the published tag
 ```
 
 It builds nothing and touches nothing of yours — a throwaway container and
 volume, removed on exit.
+
+**One thing the published image cannot do for you: a sub-path.**
+`HELPARR_BASE_PATH` is a build input, not a runtime setting — it is compiled
+into the server, the client bundles and every asset URL. The published image is
+the empty-base-path build, which serves helparr at the root of whatever
+hostname or port it is reached on. Serving it under `/helparr` means building
+your own image; see [Behind a reverse proxy](#behind-a-reverse-proxy) below.
+Starting the published image with `HELPARR_BASE_PATH` set to something else
+does not half-work — startup refuses the mismatch and says so.
 
 ### Behind a reverse proxy
 

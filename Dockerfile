@@ -54,6 +54,22 @@ FROM ${NODE_IMAGE} AS runner
 
 WORKDIR /app
 
+# `source` is the load-bearing one: GHCR links a package to a repository
+# automatically only when the push comes from that repository's workflow, and
+# this label is the other way it can be established. Baking it in means the
+# linkage is a property of the image rather than of the push path, so an image
+# built by hand does not silently become an orphan package that the workflow
+# token can never write to afterwards (T1 / REQ-DEPLOY-019).
+#
+# The publish workflow also passes labels from docker/metadata-action, which
+# adds the revision and created timestamps that only CI knows. Those override
+# these on a pushed image; these are what a locally-built image carries.
+LABEL org.opencontainers.image.source="https://github.com/feliperuzg/helparr" \
+      org.opencontainers.image.url="https://github.com/feliperuzg/helparr" \
+      org.opencontainers.image.title="helparr" \
+      org.opencontainers.image.description="A self-hosted control surface for the operations your *arr stack makes slow — or impossible — from its own UIs." \
+      org.opencontainers.image.licenses="MIT"
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 # The container binds every interface: it is reached through the published port
