@@ -13,6 +13,19 @@ const nextConfig = {
   // `packaging-and-hardening` copies `.next/static` and `public/` into it.
   output: 'standalone',
 
+  // 28 MB of the 51 MB `node_modules` in that standalone output was `@img` —
+  // sharp's platform binaries — which nothing at runtime loads. Next traces
+  // sharp in because it backs the `next/image` optimizer; helparr imports
+  // `next/image` nowhere. sharp is a devDependency used only by
+  // `scripts/build-icons.mjs` at authoring time, and the icons it emits are
+  // committed binaries. So the optimizer is declared off and the binaries are
+  // kept out of the trace: the first states the intent, the second enforces it,
+  // because only the trace decides what actually lands in the image.
+  images: { unoptimized: true },
+  outputFileTracingExcludes: {
+    '*': ['node_modules/@img/**', 'node_modules/sharp/**'],
+  },
+
   reactStrictMode: true,
 
   // The encrypted SQLite driver is a native module. It must stay external to
