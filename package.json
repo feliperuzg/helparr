@@ -18,6 +18,7 @@
     "build:standalone": "next build && cp -R .next/static .next/standalone/.next/static && mkdir -p .next/standalone/public && cp -R public/. .next/standalone/public/ && cp start.mjs .next/standalone/start.mjs",
     "build:image": "docker build -t helparr:local .",
     "package": "npm run build:standalone && npm run build:image",
+    "build:icons": "node scripts/build-icons.mjs",
     "verify:downloadid": "node scripts/verify-download-id.mjs",
     "verify:image": "node scripts/verify-image.mjs",
     "spike:grab": "node scripts/spike-grab-semantics.mjs",
@@ -50,6 +51,7 @@
     "eslint-config-next": "^16.3.5",
     "jsdom": "^25.0.1",
     "playwright": "^1.63.0",
+    "sharp": "^0.35.4",
     "typescript": "^5.6.3",
     "vitest": "^2.1.5"
   }

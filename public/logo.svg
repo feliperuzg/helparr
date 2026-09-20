@@ -1,0 +1,32 @@
+<!--
+  The helparr mark: four streams stepping down into one stack.
+
+  Several Sonarr/Radarr/Prowlarr instances read into a single list, drawn as
+  four ribbons that each fold down a level as they travel right and settle
+  interlocked. Vector, so it stays sharp at 16px where a rasterised logo turns
+  to mush.
+
+  This file is the SOURCE. Every shipped icon (public/icon.png,
+  public/icon-1024.png, src/app/icon.png, src/app/apple-icon.png,
+  src/app/favicon.ico) is rendered from it by `npm run build:icons`. Edit
+  here, re-run that, commit the lot - never hand-edit a PNG, or the set drifts.
+
+  Colours are the brand tokens from src/app/globals.css:
+    background #0F172A  (color-bg-raw)
+    ribbons    #22C55E  (color-accent-raw)
+
+  Each ribbon is a filled path rather than a stroke, because the ends are cut
+  on a slant and no stroke linecap produces an angled end. The shape is sheared
+  by 46 across its 76 thickness, so every feature on the bottom edge sits 46
+  right of its partner on the top edge - including the fold.
+
+  Geometry: bounding box 632 x 520 centred on (512, 512), inside the safe
+  area every platform mask crops to.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="helparr">
+  <rect width="1024" height="1024" rx="224" fill="#0F172A"/>
+  <path fill="#22C55E" d="M196 252 H400 C452 252 452 300 504 300 H782 L828 376 H550 C498 376 498 328 446 328 H242 Z"/>
+  <path fill="#22C55E" d="M196 384 H418 C470 384 470 432 522 432 H782 L828 508 H568 C516 508 516 460 464 460 H242 Z"/>
+  <path fill="#22C55E" d="M196 516 H436 C488 516 488 564 540 564 H782 L828 640 H586 C534 640 534 592 482 592 H242 Z"/>
+  <path fill="#22C55E" d="M196 648 H454 C506 648 506 696 558 696 H782 L828 772 H604 C552 772 552 724 500 724 H242 Z"/>
+</svg>

@@ -399,6 +399,9 @@ These are non-negotiable, and a PR that breaks one won't be merged:
 - **New UI meets WCAG 2.1 AA** and uses CSS variables from the token contract —
   never a hardcoded hex.
 - **A degraded instance degrades alone.** Nothing may take the whole app down.
+- **The icons are generated, never hand-edited.** `public/logo.svg` is the only
+  source; `npm run build:icons` renders the five committed binaries from it.
+  Editing a PNG directly makes the set drift apart silently.
 
 ### Submitting
 
