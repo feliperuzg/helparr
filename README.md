@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="status: early development" src="https://img.shields.io/badge/status-early%20development-FBBF24">
+  <img alt="status: internal testing" src="https://img.shields.io/badge/status-internal%20testing-FBBF24">
   <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
   <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-0F172A">
 </p>
@@ -80,28 +80,80 @@ comfortable with API keys, indexer semantics, and release-group naming.
 
 ## Status
 
-Early development. The first vertical slice is in:
+**Internal testing**, ahead of a first release. Everything helparr set out to do
+is built:
 
 | Area | State |
 |---|---|
-| Operator auth (single password, encrypted session) | ✅ implemented |
-| Instance connections + encrypted credential storage | ✅ implemented |
-| Connection testing & per-instance health/degradation | ✅ implemented |
-| Unified queue & instance overview | 📋 specified |
-| Arbitrary indexer search & manual grab | 📋 specified |
-| Library gaps & manual release attach | 📋 specified |
-| Bulk rename with preview-then-apply | 📋 specified |
-| Packaging (Docker image), saved searches, hardening | 📋 specified |
+| Operator auth (single password, encrypted session) | ✅ shipped |
+| Instance connections + encrypted credential storage | ✅ shipped |
+| Connection testing & per-instance health/degradation | ✅ shipped |
+| Unified queue & instance overview | ✅ shipped |
+| Arbitrary indexer search & manual grab | ✅ shipped |
+| Library gaps & manual release attach | ✅ shipped |
+| Bulk rename with preview-then-apply | ✅ shipped |
+| Packaging, saved searches, keyboard layer, WCAG AA floor | ✅ shipped |
 
-The three implemented rows shipped as one change, verified end to end against a
-real Sonarr instance — 19 requirements across the `auth` and `instances`
-capabilities.
+Seven changes; 120 requirements and 187 scenarios across nine capabilities,
+all specified and reviewed before they were built. Nothing is in flight.
 
-Everything still specified has a proposal (requirements), a plan (technical
-design), and delta specs that merge into the canonical set when it ships.
+What has *not* happened is a release. There is no tag, no image on any registry,
+and no install path that doesn't start with `git clone` — the deployment
+instructions below build from source, and will until this phase ends.
 
-Because packaging hasn't landed yet, **there is no published image or release
-artifact.** The deployment instructions below build from source.
+### What this phase is for
+
+Shipped means the acceptance criteria hold and the gates are green. It does not
+mean the code has met a library it didn't expect. The suites run against
+fixtures and a single real stack; the tail is what internal testing is for — an
+indexer that answers slowly, a season pack named by a group nobody scripted for,
+a rename preview spanning four thousand files, a NAS whose clock is wrong.
+
+Before you point it at anything, two things are worth being blunt about.
+
+**helparr issues real writes.** A grab is a grab. An attach asks Sonarr to
+import. A rename moves files on disk through the *arr APIs. None of it is
+reversible by helparr, and the *arr APIs offer no rollback either. Every
+destructive path sits behind a preview you have to confirm, and that preview is
+the entire safety net — so read the diff, and point this at a stack you could
+afford to repair.
+
+**Back up `HELPARR_ENCRYPTION_KEY` before the first run**, not after. Losing it
+loses the database, and this phase is exactly when you are most likely to throw
+away a container and recreate it.
+
+Each integration helparr was least sure of also has a script that settles the
+question against *your* stack rather than a fixture. None of them changes
+anything in Sonarr, Radarr, Prowlarr or the download client:
+
+| Script | What it settles |
+|---|---|
+| `npm run verify:image` | Every claim the Docker section below makes, against a real container — throwaway, removed on exit |
+| `npm run verify:downloadid` | That queue rows and download-client torrents join on the id helparr thinks they do |
+| `npm run spike:grab` | What your Prowlarr and *arr actually return for a manual grab, without issuing one |
+| `npm run spike:gaps` | What an attach would resolve to, before one is attached |
+| `npm run spike:rename` | Your real rename preview, without posting a command |
+
+The one script that writes — `scripts/verify-rename-scope.mjs`, which renames a
+single real file irreversibly to re-check an *arr behaviour — is deliberately
+not wired to an `npm run` name. Read its header before you ever run it.
+
+### Known and open
+
+- a 401 bounce ignores `HELPARR_BASE_PATH`, so a session
+  that expires under a sub-path redirects to the wrong URL.
+- the rename screen reports "0 files already correct" for a
+  title that simply has nothing pending.
+
+Neither of those is a data-loss path, and both are
+the kind of thing only running it finds — which is the argument for this phase.
+
+### What a first release still needs
+
+- the two bugs above, plus whatever this phase turns up
+- a published image, so installing stops meaning building
+- a tag and a changelog: `package.json` still reads `0.1.0`,
+  and nothing has ever been released under it
 
 ---
 
@@ -376,15 +428,22 @@ npm run typecheck  # tsc --noEmit
 npm run lint       # eslint (flat config)
 ```
 
-Two heavier lanes are gated behind env vars so a forgotten build fails loudly
-rather than silently skipping:
+That first lane is 20 files and 208 tests, and it is the fast one. Three
+heavier lanes are gated behind env vars so a forgotten build fails loudly rather
+than silently skipping:
 
 ```bash
 npm run test:bundle   # asserts no API keys / native modules leak into .next/static
-npm run test:a11y     # drives the real standalone build in Chromium, axe WCAG 2.1 AA
+npm run test:e2e      # 14 files driving the real standalone build in Chromium
+npm run test:a11y     # the same build, axe WCAG 2.1 AA, zero violations
 ```
 
-`npm run test:a11y` needs a Chromium download once: `npx playwright install chromium`.
+All three build first, so they take minutes rather than seconds — which is why
+they are not in `npm test`. The last two need a Chromium download once:
+
+```bash
+npx playwright install chromium
+```
 
 ### Ground rules
 
@@ -407,8 +466,13 @@ These are non-negotiable, and a PR that breaks one won't be merged:
 
 Branch from `main`, keep the commit history readable, and make sure
 `npm test`, `npm run typecheck`, and `npm run lint` are all green. If the change
-touches UI, run `npm run test:a11y` too. Describe *what problem it solves* in the
-PR — link the relevant proposal if there is one.
+touches UI, run `npm run test:e2e` and `npm run test:a11y` too. Describe *what
+problem it solves* in the PR — link the relevant proposal if there is one.
+
+While helparr is in internal testing, a bug report is worth more than a patch.
+The useful ones say which *arr versions you are on, what the screen showed, and
+what the instance's own log said — helparr is a client, and half of what looks
+like a helparr bug is an *arr answering something nobody expected.
 
 ---
 
