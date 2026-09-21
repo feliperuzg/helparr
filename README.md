@@ -142,25 +142,20 @@ not wired to an `npm run` name. Read its header before you ever run it.
 
 ### Known and open
 
-- a 401 bounce ignores `HELPARR_BASE_PATH`, so a session
-  that expires under a sub-path redirects to the wrong URL.
-- the rename screen reports "0 files already correct" for a
-  title that simply has nothing pending.
+- A 401 bounce ignores `HELPARR_BASE_PATH`, so a session that expires under a
+  sub-path redirects to the wrong URL.
+- The rename screen reports "0 files already correct" for a title that simply
+  has nothing pending.
 
-Neither of those is a data-loss path, and both are
-the kind of thing only running it finds — which is the argument for this phase.
+Neither is a data-loss path, and both are the kind of thing only running it
+against a real library finds — which is the argument for this phase.
 
 ### What a first release still needs
 
 - the two bugs above, plus whatever this phase turns up
-- a tag and a changelog: `package.json` still reads `0.1.0`,
-  and nothing has ever been released under it. Until that tag exists the
-  published image has no `:latest` and no version tag — only `:main`.
-- a published image. Half done: CI now publishes
-  `ghcr.io/feliperuzg/helparr` for both architectures, but the package is
-  private, so a tester still needs a token and a `docker login` before they can
-  pull. Making it public is a one-way door and belongs to the release, not to
-  this phase.
+- a tag and a changelog. `package.json` reads `0.1.0` and nothing has been
+  released under it yet; until a `v*` tag exists, no image has been published
+  at all, because publishing is triggered by the tag and nothing else.
 
 ---
 
@@ -363,16 +358,22 @@ docker run -d --name helparr \
   -v helparr-data:/data \
   -e HELPARR_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
   -e HELPARR_INITIAL_PASSWORD='replace-me' \
-  ghcr.io/feliperuzg/helparr:main
+  ghcr.io/feliperuzg/helparr:latest
 ```
 
 Which tag:
 
 | Tag | What it is |
 |---|---|
-| `main` | The current build of the default branch. What internal testing runs. |
-| `sha-<short>` | One specific commit. Use it to pin, or to go back to a build that worked. |
-| `<version>`, `latest` | Published on a `v*` git tag only. **No version tag exists yet**, so `:latest` does not resolve at all — asking for it fails with `manifest unknown`. |
+| `<version>`, `<major>.<minor>` | A release. `1.2` follows the newest `1.2.x`, so it picks up patches and never a breaking change. |
+| `latest` | The newest release. Convenient, and the one to stop using the moment you care about reproducing a deployment. |
+| `sha-<short>` | The exact commit a release was built from. Use it to pin, or to go back to a build that worked. |
+
+A push to `main` publishes nothing. An image is only ever built from a `v*` git
+tag, and only after the full test suite has passed on that tag — so every
+digest in the registry corresponds to a release that was green. **Until the
+first `v*` tag exists no image has been published at all**, and `:latest` fails
+with `manifest unknown` rather than resolving to something unreleased.
 
 If you would rather build it yourself, `npm run build:image` still produces
 `helparr:local` and every command below works the same with that tag
@@ -391,7 +392,7 @@ it. Give it the right owner first:
 
 ```bash
 sudo install -d -o 1001 -g 1001 -m 0750 /srv/helparr
-docker run -d --name helparr -p 3000:3000 -v /srv/helparr:/data … ghcr.io/feliperuzg/helparr:main
+docker run -d --name helparr -p 3000:3000 -v /srv/helparr:/data … ghcr.io/feliperuzg/helparr:latest
 ```
 
 `1001` is the uid the image creates and runs as. `HELPARR_DB_PATH` defaults to
@@ -410,7 +411,7 @@ Every one of those claims is checked, against a real container, by:
 ```bash
 npm run verify:image                                       # helparr:local
 
-IMAGE=ghcr.io/feliperuzg/helparr:main npm run verify:image  # the published tag
+IMAGE=ghcr.io/feliperuzg/helparr:latest npm run verify:image  # a published release
 ```
 
 It builds nothing and touches nothing of yours — a throwaway container and
@@ -535,6 +536,20 @@ they are not in `npm test`. The last two need a Chromium download once:
 ```bash
 npx playwright install chromium
 ```
+
+### How work is organized
+
+Development here is requirements-first. Before a feature is written it has
+acceptance criteria in SHALL/MUST language, and those criteria become tests
+before they become code — which is why the suites read like a specification
+and why a change that can't be stated as a testable claim doesn't get built.
+
+That paper trail is kept in a private workspace, so the *why* behind a decision
+usually isn't in this repo. Two things make up for it: commit messages are
+written to carry the reasoning, and load-bearing decisions are documented in a
+comment at the place they constrain. If something looks arbitrary, check the
+comment above it before assuming it is — and if it really is undocumented,
+that's a bug worth filing.
 
 ### Ground rules
 

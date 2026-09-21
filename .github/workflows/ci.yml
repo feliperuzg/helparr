@@ -1,0 +1,103 @@
+# Everything that has to be true before helparr is worth shipping.
+#
+# This workflow is both a trigger and a subroutine. It runs on its own for a
+# push to main and for every pull request, and `publish.yml` calls it through
+# `workflow_call` so that a release build *waits* for it. `workflow_run` would
+# not do: it fires asynchronously after a run completes, which is fine for
+# reporting and useless as a gate — the tag build would already be pushing.
+#
+# Two lanes, deliberately independent rather than chained. The fast lane
+# answers "does this compile and do the units hold" in about a minute; the
+# browser lane answers "does the built product actually work" and costs
+# several. Chaining them would save runner minutes on a broken typecheck and
+# cost wall-clock on every green run, which is the wrong way round for a gate
+# that a release is waiting on.
+
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# Superseded runs on a branch or a PR are pointless. Tag runs are NOT
+# cancelled: this workflow gates a publish when it is called from publish.yml,
+# and a cancelled gate is a release that silently did not happen.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  verify:
+    name: typecheck, lint, test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+  browser:
+    name: bundle, a11y, e2e
+    runs-on: ubuntu-24.04
+    # These drive a real standalone server in a real Chromium, and the slowest
+    # of them walks a 500-row virtualized queue. 30 minutes is a ceiling for a
+    # hang, not a budget — a healthy run is well under it.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # The suite imports `playwright` directly rather than `@playwright/test`,
+      # so nothing downloads a browser for it. `--with-deps` also pulls the
+      # shared libraries headless Chromium needs, which a bare runner lacks.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # One build for all three lanes. `npm run test:a11y` and `test:e2e` each
+      # run their own `build:standalone`, which is right for a local one-off
+      # and would mean three `next build`s here; the `:run` variants exist for
+      # exactly this and assume the output is already on disk.
+      - name: Build
+        run: npm run build:standalone
+
+      # Separate steps so a failure names the lane in the run summary rather
+      # than burying it in a single "tests" step.
+      - name: Bundle boundary
+        run: npm run test:bundle:run
+
+      - name: Accessibility
+        run: npm run test:a11y:run
+
+      - name: End to end
+        run: npm run test:e2e:run

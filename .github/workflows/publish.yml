@@ -1,12 +1,18 @@
 # Publishes the helparr container image to GHCR, for linux/amd64 and
 # linux/arm64, from one tag.
 #
-# Shape: gate → two native builds → merge. Each architecture is built on a
+# Shape: ci → two native builds → merge. Each architecture is built on a
 # runner of that architecture and pushed *by digest* (no tag); the merge job
 # assembles one image index over both digests and applies the tags. The
 # alternative — one runner declaring both platforms — emulates one of them
 # under QEMU, and this Dockerfile compiles better-sqlite3-multiple-ciphers from
 # source and runs `next build`, which is the worst possible workload to emulate.
+#
+# Nothing is published by pushing code. A tag is the only trigger, and the tag
+# only builds once the whole of ci.yml is green — `workflow_call` plus `needs:`,
+# so the dependency is an actual edge in the graph rather than two workflows
+# racing. Publishing a broken image is cheap to do and expensive to undo: the
+# digest is already in the registry and somebody may already have pulled it.
 #
 # `ubuntu-24.04-arm` is a standard, included-minutes runner in private
 # repositories as of 2026-01-29. Guidance older than that says arm64 needs a
@@ -21,8 +27,6 @@ name: publish
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -30,14 +34,15 @@ on:
 # The only permissions the publish path needs. No repository secret is added
 # for this workflow: GITHUB_TOKEN with packages:write both authenticates the
 # push and is what links the package to this repository (ADR-8). Note there is
-# no `packages: delete` permission in this model — which is why retention is
-# deliberately out of scope here.
+# no `packages: delete` permission in this model, which is why no retention
+# policy ships here.
 permissions:
   contents: read
   packages: write
 
-# Superseded runs on a branch are pointless — cancel them. Tag runs are NOT
-# cancelled: a cancelled release build is a release that silently did not happen.
+# A tag run is never cancelled: a cancelled release build is a release that
+# silently did not happen. Only a manual dispatch, which can be re-triggered at
+# will, is superseded by a newer one.
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -48,38 +53,23 @@ env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
-  # The fast lanes only. test:bundle / test:a11y / test:e2e each run a real
-  # `next build` and nobody has measured what they cost in CI yet, so they do
-  # not gate a publish (ADR-4). A build-breaking change still
-  # fails the pipeline — the build jobs run `next build` inside the builder.
-  gate:
-    name: typecheck, lint, test
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm test
+  # The whole suite, not a subset: typecheck, lint, units, and the browser lane
+  # that drives a real standalone server. This used to be an inline job running
+  # the fast lanes only, on the argument that nobody had measured what the
+  # heavy ones cost in CI. That argument buys a few minutes per release and
+  # pays for them with the one failure mode worth avoiding here — a published
+  # tag whose app does not start.
+  #
+  # `permissions` is narrowed for the call: ci.yml needs nothing but the
+  # checkout, and a reusable workflow inherits the caller's token otherwise.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
   build:
     name: build ${{ matrix.platform }}
-    needs: gate
+    needs: ci
     runs-on: ${{ matrix.runner }}
     strategy:
       # Independent legs: one architecture failing must not hide or cancel the
@@ -188,12 +178,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Tags are derived from the ref, never hand-written (REQ-DEPLOY-019):
-      #   push to main → `main` and `sha-<short>`
-      #   tag v1.2.3   → `1.2.3`, `1.2`, and `latest`
-      # `latest` is deliberately restricted to version tags: on main it would
-      # mean a bare `docker pull ghcr.io/feliperuzg/helparr` silently picks up
-      # unreleased work. Before the first `v*` exists, `latest` does not resolve
-      # at all and the documentation names `:main` instead (ADR-9).
+      #   tag v1.2.3        → `1.2.3`, `1.2`, `latest`, and `sha-<short>`
+      #   manual dispatch   → `main` and `sha-<short>`
+      # The branch and sha rules are kept for the dispatch path only: pushing
+      # to main no longer triggers this workflow, so `:main` is now something
+      # that exists on purpose or not at all. `latest` is restricted to version
+      # tags — floating it on main would mean a bare
+      # `docker pull ghcr.io/feliperuzg/helparr` silently picks up unreleased
+      # work (ADR-9).
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -209,8 +201,7 @@ jobs:
 
       # One index over the per-platform digests the build jobs pushed. The
       # children stay untagged by design — which is exactly why the usual
-      # "prune untagged versions" cleanup recipe would break this tag, and why
-      # no retention policy ships with this change.
+      # "prune untagged versions" cleanup recipe would break this tag.
       - name: Create and push the manifest list
         working-directory: ${{ runner.temp }}/digests
         run: |

@@ -19,10 +19,10 @@ services:
     # carrying `read:packages` before the first pull, or this fails as
     # `denied`. See the README's Docker section.
     #
-    # `:main` is the current build of the default branch. `:latest` is only
-    # published on a version tag, and no version tag exists yet, so naming
-    # `:latest` here would fail with `manifest unknown`.
-    image: ghcr.io/feliperuzg/helparr:main
+    # Images are built from `v*` git tags only, so `:latest` is the newest
+    # release and there is nothing floating on the default branch to point at.
+    # Pin `:<version>` here once you have a deployment worth reproducing.
+    image: ghcr.io/feliperuzg/helparr:latest
     # Or build it here instead of pulling. This is not just an offline escape
     # hatch: the published image is the empty-base-path build, and basePath is
     # compiled in, so serving helparr under a subpath REQUIRES building your
