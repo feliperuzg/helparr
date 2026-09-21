@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/feliperuzg/helparr/releases/latest"><img alt="release: v0.1.0" src="https://img.shields.io/badge/release-v0.1.0-0F172A"></a>
   <img alt="status: internal testing" src="https://img.shields.io/badge/status-internal%20testing-FBBF24">
   <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
   <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-0F172A">
@@ -99,9 +100,10 @@ criteria written down before the code, then the gates. The specification
 documents themselves are kept outside this repository; the test suites are
 their executable half, and they are all here.
 
-What has *not* happened is a release. There is no tag, no image on any registry,
-and no install path that doesn't start with `git clone` — the deployment
-instructions below build from source, and will until this phase ends.
+`v0.1.0` is the first tag, and the first image built from one — see
+[CHANGELOG.md](CHANGELOG.md) for what it contains. The `0.` is deliberate: this
+release exists so the thing can be installed and pointed at a real library, not
+because the tail has been explored.
 
 ### What this phase is for
 
@@ -150,12 +152,11 @@ not wired to an `npm run` name. Read its header before you ever run it.
 Neither is a data-loss path, and both are the kind of thing only running it
 against a real library finds — which is the argument for this phase.
 
-### What a first release still needs
+### What the next release needs
 
-- the two bugs above, plus whatever this phase turns up
-- a tag and a changelog. `package.json` reads `0.1.0` and nothing has been
-  released under it yet; until a `v*` tag exists, no image has been published
-  at all, because publishing is triggered by the tag and nothing else.
+The two bugs above, plus whatever this phase turns up. Nothing else is known to
+be missing — which is precisely the claim that pointing it at a real library is
+meant to test.
 
 ---
 
@@ -341,16 +342,7 @@ The image is published to the GitHub Container Registry as
 served from one tag — the same line works on an Intel NAS and on Apple silicon,
 and you never pick an architecture.
 
-**The package is private during internal testing, so the pull is
-authenticated.** Take a GitHub personal access token (classic) with the
-`read:packages` scope, and log in once:
-
-```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-```
-
-Without that, `docker pull` fails with `denied` — which reads like the tag does
-not exist rather than like you are not logged in.
+The package is public, so the pull needs no token and no `docker login`.
 
 ```bash
 docker run -d --name helparr \
@@ -370,10 +362,9 @@ Which tag:
 | `sha-<short>` | The exact commit a release was built from. Use it to pin, or to go back to a build that worked. |
 
 A push to `main` publishes nothing. An image is only ever built from a `v*` git
-tag, and only after the full test suite has passed on that tag — so every
-digest in the registry corresponds to a release that was green. **Until the
-first `v*` tag exists no image has been published at all**, and `:latest` fails
-with `manifest unknown` rather than resolving to something unreleased.
+tag, and only after the full test suite has passed on that tag — typecheck,
+lint, units, and the browser lane that drives a real standalone server. Every
+digest in the registry therefore corresponds to a release that was green.
 
 If you would rather build it yourself, `npm run build:image` still produces
 `helparr:local` and every command below works the same with that tag
