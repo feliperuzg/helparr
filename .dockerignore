@@ -47,4 +47,7 @@ vitest.config.ts
 # healthcheck under docker/ is copied explicitly by the runner stage.
 scripts
 
+# The README's screenshots. Read on GitHub, never by the server.
+docs
+
 tsconfig.tsbuildinfo

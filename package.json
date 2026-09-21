@@ -22,6 +22,7 @@
     "build:image": "docker build -t helparr:local .",
     "package": "npm run build:standalone && npm run build:image",
     "build:icons": "node scripts/build-icons.mjs",
+    "build:screenshots": "npm run build:standalone && HELPARR_SHOTS=1 vitest run test/screenshots.test.ts",
     "verify:downloadid": "node scripts/verify-download-id.mjs",
     "verify:image": "node scripts/verify-image.mjs",
     "spike:grab": "node scripts/spike-grab-semantics.mjs",

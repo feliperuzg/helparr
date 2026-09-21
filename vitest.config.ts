@@ -48,6 +48,10 @@ export default defineConfig({
           '**/rename-interaction.test.ts',
           '**/rename-perf.test.ts',
         ]),
+      // And for the README's screenshots, which are not a test of anything —
+      // they are a generator that happens to need the browser lane's fakes and
+      // its standalone boot. `npm run build:screenshots` opts in.
+      ...(process.env.HELPARR_SHOTS ? [] : ['**/screenshots.test.ts']),
     ],
     // The suite opens real encrypted SQLite files and real loopback HTTP
     // servers; running files in parallel would have them fight over ports and
