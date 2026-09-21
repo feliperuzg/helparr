@@ -15,9 +15,7 @@ services:
   helparr:
     # Published multi-arch: the same tag resolves to amd64 on an Intel NAS and
     # to arm64 on Apple silicon, so this line is identical on both. The package
-    # is private during internal testing — `docker login ghcr.io` with a token
-    # carrying `read:packages` before the first pull, or this fails as
-    # `denied`. See the README's Docker section.
+    # is public, so the pull needs no token and no `docker login`.
     #
     # Images are built from `v*` git tags only, so `:latest` is the newest
     # release and there is nothing floating on the default branch to point at.

@@ -10,7 +10,6 @@
 
 <p align="center">
   <a href="https://github.com/feliperuzg/helparr/releases/latest"><img alt="release: v0.1.0" src="https://img.shields.io/badge/release-v0.1.0-0F172A"></a>
-  <img alt="status: internal testing" src="https://img.shields.io/badge/status-internal%20testing-FBBF24">
   <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
   <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-0F172A">
 </p>
@@ -42,11 +41,50 @@ helparr is a **companion, not a replacement.** It never owns library state and
 never touches the filesystem. Every write goes through the *arr APIs, so
 Sonarr/Radarr remain the source of truth for what exists and where it lives.
 
+> **It issues real writes.** A grab is a grab, an attach asks Sonarr to import,
+> and a rename moves files on disk through the *arr APIs. None of it is
+> reversible by helparr, and the *arr APIs offer no rollback either. Every
+> destructive path sits behind a preview you have to confirm, and that preview
+> is the entire safety net — so read the diff.
+
 ### Who it's for
 
 Self-hosters and homelab operators who already run a fully configured *arr
 stack, on a trusted LAN, for a single operator or a household. It assumes you're
 comfortable with API keys, indexer semantics, and release-group naming.
+
+---
+
+## Screens
+
+**Overview** — every instance's health and one queue across all of them. Sonarr
+calls the stalled row healthy, because it handed the release to the client and
+has nothing further to say about it; helparr disagrees from the client's own
+evidence. Surfacing that disagreement is what this screen is for.
+
+![The Overview screen: four connected instances and a unified queue, one row flagged as stalled](docs/screenshots/overview.png)
+
+**Indexer Search** — free text across every indexer Prowlarr manages, with the
+filters the *arr UIs omit, and a grab to a target you pick.
+
+![The Indexer Search screen: six results from two indexers, with size, seeders, leechers and age](docs/screenshots/search.png)
+
+**Gaps** — everything monitored with no file, from both Sonarr and Radarr, in
+one list. Attach a specific release to a specific episode, or a season pack to a
+season.
+
+![The Gaps screen: missing episodes grouped by series, plus a missing film](docs/screenshots/gaps.png)
+
+**Rename** — the complete diff first. Nothing has moved at the moment this is on
+screen, and the confirmation asks you to type the file count before anything
+does.
+
+![The Rename screen: five files with their current and proposed paths, each flagged as a folder move](docs/screenshots/rename.png)
+
+These are generated, not captured by hand: `npm run build:screenshots` drives
+the real production build in a browser against stub *arr servers, so every
+title, path and release name above is invented and the images go stale loudly
+rather than silently.
 
 ---
 
@@ -76,87 +114,6 @@ comfortable with API keys, indexer semantics, and release-group naming.
   them and provides no means of discovering them.
 - **Cloud/serverless hosting.** It's built to run on a NAS or a mini-PC with a
   small idle footprint, next to the stack it manages.
-
----
-
-## Status
-
-**Internal testing**, ahead of a first release. Everything helparr set out to do
-is built:
-
-| Area | State |
-|---|---|
-| Operator auth (single password, encrypted session) | ✅ shipped |
-| Instance connections + encrypted credential storage | ✅ shipped |
-| Connection testing & per-instance health/degradation | ✅ shipped |
-| Unified queue & instance overview | ✅ shipped |
-| Arbitrary indexer search & manual grab | ✅ shipped |
-| Library gaps & manual release attach | ✅ shipped |
-| Bulk rename with preview-then-apply | ✅ shipped |
-| Packaging, saved searches, keyboard layer, WCAG AA floor | ✅ shipped |
-
-Every row above shipped as a specified change — requirements and acceptance
-criteria written down before the code, then the gates. The specification
-documents themselves are kept outside this repository; the test suites are
-their executable half, and they are all here.
-
-`v0.1.0` is the first tag, and the first image built from one — see
-[CHANGELOG.md](CHANGELOG.md) for what it contains. The `0.` is deliberate: this
-release exists so the thing can be installed and pointed at a real library, not
-because the tail has been explored.
-
-### What this phase is for
-
-Shipped means the acceptance criteria hold and the gates are green. It does not
-mean the code has met a library it didn't expect. The suites run against
-fixtures and a single real stack; the tail is what internal testing is for — an
-indexer that answers slowly, a season pack named by a group nobody scripted for,
-a rename preview spanning four thousand files, a NAS whose clock is wrong.
-
-Before you point it at anything, two things are worth being blunt about.
-
-**helparr issues real writes.** A grab is a grab. An attach asks Sonarr to
-import. A rename moves files on disk through the *arr APIs. None of it is
-reversible by helparr, and the *arr APIs offer no rollback either. Every
-destructive path sits behind a preview you have to confirm, and that preview is
-the entire safety net — so read the diff, and point this at a stack you could
-afford to repair.
-
-**Back up `HELPARR_ENCRYPTION_KEY` before the first run**, not after. Losing it
-loses the database, and this phase is exactly when you are most likely to throw
-away a container and recreate it.
-
-Each integration helparr was least sure of also has a script that settles the
-question against *your* stack rather than a fixture. None of them changes
-anything in Sonarr, Radarr, Prowlarr or the download client:
-
-| Script | What it settles |
-|---|---|
-| `npm run verify:image` | Every claim the Docker section below makes, against a real container — throwaway, removed on exit |
-| `npm run verify:downloadid` | That queue rows and download-client torrents join on the id helparr thinks they do |
-| `npm run spike:grab` | What your Prowlarr and *arr actually return for a manual grab, without issuing one |
-| `npm run spike:gaps` | What an attach would resolve to, before one is attached |
-| `npm run spike:rename` | Your real rename preview, without posting a command |
-
-The one script that writes — `scripts/verify-rename-scope.mjs`, which renames a
-single real file irreversibly to re-check an *arr behaviour — is deliberately
-not wired to an `npm run` name. Read its header before you ever run it.
-
-### Known and open
-
-- A 401 bounce ignores `HELPARR_BASE_PATH`, so a session that expires under a
-  sub-path redirects to the wrong URL.
-- The rename screen reports "0 files already correct" for a title that simply
-  has nothing pending.
-
-Neither is a data-loss path, and both are the kind of thing only running it
-against a real library finds — which is the argument for this phase.
-
-### What the next release needs
-
-The two bugs above, plus whatever this phase turns up. Nothing else is known to
-be missing — which is precisely the claim that pointing it at a real library is
-meant to test.
 
 ---
 
@@ -278,6 +235,10 @@ sitting in a file in plaintext, and anyone who can read the file is you.
 ---
 
 ## Deploy
+
+Releases are tagged `v*`, and [CHANGELOG.md](CHANGELOG.md) records what each one
+contains — open bugs included. The leading `0.` is deliberate: the public
+surface can still move between minors.
 
 Container is the short path — the image is published, for `linux/amd64` and
 `linux/arm64` under one tag, so there is nothing to compile. Bare metal builds
@@ -511,13 +472,13 @@ npm run typecheck  # tsc --noEmit
 npm run lint       # eslint (flat config)
 ```
 
-That first lane is 20 files and 208 tests, and it is the fast one. Three
+That first lane is 22 files and 224 tests, and it is the fast one. Three
 heavier lanes are gated behind env vars so a forgotten build fails loudly rather
 than silently skipping:
 
 ```bash
 npm run test:bundle   # asserts no API keys / native modules leak into .next/static
-npm run test:e2e      # 14 files driving the real standalone build in Chromium
+npm run test:e2e      # 16 files driving the real standalone build in Chromium
 npm run test:a11y     # the same build, axe WCAG 2.1 AA, zero violations
 ```
 
@@ -527,6 +488,29 @@ they are not in `npm test`. The last two need a Chromium download once:
 ```bash
 npx playwright install chromium
 ```
+
+`npm run build:screenshots` uses the same browser and the same stub servers to
+regenerate `docs/screenshots/`. Run it when a change alters one of the four
+screens the README shows.
+
+### Checking it against your own stack
+
+Every suite above runs against stub *arr servers. The integrations helparr was
+least sure of each also have a script that settles the question against *your*
+instances instead, and none of them changes anything in Sonarr, Radarr, Prowlarr
+or the download client:
+
+| Script | What it settles |
+|---|---|
+| `npm run verify:image` | Every claim the [Docker](#docker) section makes, against a real container — throwaway, removed on exit |
+| `npm run verify:downloadid` | That queue rows and download-client torrents join on the id helparr thinks they do |
+| `npm run spike:grab` | What your Prowlarr and *arr actually return for a manual grab, without issuing one |
+| `npm run spike:gaps` | What an attach would resolve to, before one is attached |
+| `npm run spike:rename` | Your real rename preview, without posting a command |
+
+The one script that writes — `scripts/verify-rename-scope.mjs`, which renames a
+single real file irreversibly to re-check an *arr behaviour — is deliberately
+not wired to an `npm run` name. Read its header before you ever run it.
 
 ### How work is organized
 
@@ -558,18 +542,22 @@ These are non-negotiable, and a PR that breaks one won't be merged:
 - **The icons are generated, never hand-edited.** `public/logo.svg` is the only
   source; `npm run build:icons` renders the five committed binaries from it.
   Editing a PNG directly makes the set drift apart silently.
+- **So are the README's screenshots.** `npm run build:screenshots` drives the
+  real build through `test/screenshots.test.ts`; a hand-captured replacement is
+  a claim nothing checks, and no image in this repository may show real library
+  data.
 
 ### Submitting
 
 Branch from `main`, keep the commit history readable, and make sure
 `npm test`, `npm run typecheck`, and `npm run lint` are all green. If the change
 touches UI, run `npm run test:e2e` and `npm run test:a11y` too. Describe *what
-problem it solves* in the PR — link the relevant proposal if there is one.
+problem it solves* in the PR.
 
-While helparr is in internal testing, a bug report is worth more than a patch.
-The useful ones say which *arr versions you are on, what the screen showed, and
-what the instance's own log said — helparr is a client, and half of what looks
-like a helparr bug is an *arr answering something nobody expected.
+A good bug report is worth as much as a patch. The useful ones say which *arr
+versions you are on, what the screen showed, and what the instance's own log
+said — helparr is a client, and half of what looks like a helparr bug is an *arr
+answering something nobody expected.
 
 ---
 
