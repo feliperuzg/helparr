@@ -95,7 +95,7 @@ export default function ReleaseInspector({
 
       <InspectorGroup title="Decision engine">
         {evaluate.isPending ? (
-          <p className="subtle" style={{ fontSize: 12 }}>
+          <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
             Asking {chosen?.label ?? 'the instance'}… this runs a live search against your
             indexers and can take a minute.
           </p>
@@ -112,14 +112,14 @@ export default function ReleaseInspector({
             rejections={evaluate.data.rejections}
           />
         ) : (
-          <p className="subtle" style={{ fontSize: 12 }}>
+          <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
             Not evaluated yet. Asking an instance runs a live search against your indexers and
             can take a minute.
           </p>
         )}
 
         {destinations.length === 0 ? (
-          <p className="subtle" style={{ fontSize: 12, marginTop: 'var(--space-3)' }}>
+          <p className="subtle" style={{ fontSize: 'var(--text-sm)', marginTop: 'var(--space-3)' }}>
             No Sonarr or Radarr instance is configured, so there is nothing to ask.
           </p>
         ) : (
@@ -198,7 +198,7 @@ function Verdict({
       <ul className="msg-list" style={{ marginTop: 'var(--space-3)' }}>
         {rejections.map((reason, i) => <li key={`${i}-${reason}`}>{reason}</li>)}
       </ul>
-      <p className="subtle" style={{ fontSize: 11, marginTop: 'var(--space-3)' }}>
+      <p className="subtle" style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-3)' }}>
         This does not block the grab. helparr reports the decision engine; it does not enforce it.
       </p>
     </>

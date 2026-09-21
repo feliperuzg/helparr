@@ -100,7 +100,7 @@ export default function QueueInspector({
         ) : (
           /* Un-enriched is a legible state, not a blank. Saying why keeps the
              operator from reading the gap as "nothing is wrong" (ADR-3). */
-          <p className="subtle" style={{ fontSize: 12 }}>
+          <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
             {record.downloadId
               ? 'No download client reported this hash. The row is shown un-enriched rather than '
                 + 'matched on title, which would attach the wrong torrent.'

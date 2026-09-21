@@ -58,7 +58,7 @@ export default function PurgeDialog({
         </>
       )}
     >
-      <p style={{ fontSize: 13 }}>
+      <p style={{ fontSize: 'var(--text-base)' }}>
         This deletes all {total} operation record{total === 1 ? '' : 's'}
         {failures > 0 ? `, including the ${failures} that did not succeed` : ''}. It cannot be
         undone, and it is the only deletion helparr performs against this log.

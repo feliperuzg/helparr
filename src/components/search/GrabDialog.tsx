@@ -109,8 +109,8 @@ export default function GrabDialog({
         </>
       )}
     >
-      <p className="mono truncate" style={{ fontSize: 12 }}>{release.title}</p>
-      <p className="subtle" style={{ fontSize: 11, marginTop: 2 }}>
+      <p className="mono truncate" style={{ fontSize: 'var(--text-sm)' }}>{release.title}</p>
+      <p className="subtle" style={{ fontSize: 'var(--text-xs)', marginTop: 2 }}>
         {[
           release.indexer,
           release.protocol,
@@ -159,7 +159,7 @@ export default function GrabDialog({
       {chosen === null ? null : (
         <div className="grab-resolve">
           {resolved.isPending ? (
-            <p className="subtle" style={{ fontSize: 12 }}>
+            <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
               Resolving what {chosen.label} will attach this to…
             </p>
           ) : resolved.isError ? (
@@ -171,12 +171,12 @@ export default function GrabDialog({
             </Callout>
           ) : parsed?.resolved ? (
             <>
-              <p className="subtle" style={{ fontSize: 11 }}>{chosen.label} will attach this to</p>
+              <p className="subtle" style={{ fontSize: 'var(--text-xs)' }}>{chosen.label} will attach this to</p>
               {/* Deliberately the destination's words, not the operator's
                   selection — REQ-OPS-007. */}
               <div className="grab-target card">
-                <p style={{ fontWeight: 600, fontSize: 13 }}>{parsed.label ?? 'an untitled entry'}</p>
-                <p className="subtle" style={{ fontSize: 11, marginTop: 2 }}>
+                <p style={{ fontWeight: 600, fontSize: 'var(--text-base)' }}>{parsed.label ?? 'an untitled entry'}</p>
+                <p className="subtle" style={{ fontSize: 'var(--text-xs)', marginTop: 2 }}>
                   {[
                     parsed.quality ? `quality ${parsed.quality}` : null,
                     parsed.releaseGroup ? `group ${parsed.releaseGroup}` : null,
@@ -205,7 +205,7 @@ export default function GrabDialog({
       ) : busy ? (
         // The only progress statement in the dialog, and it says what is
         // happening rather than what it hopes will happen.
-        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 12 }}>
+        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 'var(--text-sm)' }}>
           Sending to {chosen?.label ?? 'the instance'}…
         </p>
       ) : (

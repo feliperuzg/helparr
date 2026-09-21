@@ -104,7 +104,7 @@ export default function GapInspector({ gap, onClose, onAttach, onSearch }: GapIn
 
       <InspectorGroup title={`History (from ${gap.instanceLabel})`}>
         {history.isPending ? (
-          <p className="subtle" style={{ fontSize: 12 }}>Reading history from {gap.instanceLabel}…</p>
+          <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>Reading history from {gap.instanceLabel}…</p>
         ) : history.isError ? (
           <Callout tone="warn">
             {history.error instanceof ApiError
@@ -114,7 +114,7 @@ export default function GapInspector({ gap, onClose, onAttach, onSearch }: GapIn
         ) : (history.data?.events.length ?? 0) === 0 ? (
           // A statement about the data, not about the item. "No history" is not
           // the same claim as "never searched", and only the first is knowable.
-          <p className="subtle" style={{ fontSize: 12 }}>
+          <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
             {gap.instanceLabel} holds no history for this {gap.kind}.
           </p>
         ) : (

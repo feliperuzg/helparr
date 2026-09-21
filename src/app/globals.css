@@ -152,6 +152,10 @@
    6. TYPOGRAPHY SCALE (DESIGN.md §3) — fluid
    ========================================================================= */
 :root {
+  /* --text-2xs sits below the DESIGN.md scale for micro-labels DESIGN.md does
+     not name — mono meta rows, key caps, count chips. Components DESIGN.md
+     does name (.badge, the .eyebrow shape) take --text-xs instead. */
+  --text-2xs:  clamp(0.625rem,  0.6rem   + 0.15vw, 0.6875rem);
   --text-xs:   clamp(0.75rem,   0.7rem   + 0.25vw, 0.8125rem);
   --text-sm:   clamp(0.8125rem, 0.75rem  + 0.3vw,  0.875rem);
   --text-base: clamp(0.9375rem, 0.875rem + 0.3vw,  1.0625rem);
@@ -192,7 +196,17 @@
   --nav-height:     48px;
   --sidebar-width:  240px;
   --inspector-width: 380px;
-  --row-height:     34px;   /* dense tables: <= 36px per DESIGN.md §5 */
+  /* Dense tables: <= 36px per DESIGN.md §5.
+     This one stays a fixed `height` on the virtualized rows rather than the
+     `min-height` every other text container now carries. Those rows are
+     absolutely positioned at offsets the virtualizer computes from its own
+     `estimateSize` constant, and the components inject that same constant back
+     out as `--row-height` precisely so the painted row and the positioned row
+     agree. A row free to grow past its offset overlaps the next one, which is
+     a worse failure than clipping. Measured headroom: at Chrome's largest
+     default font size (24px) `--text-xs` resolves to ~19px and the line box to
+     ~30px, inside 34px. Page zoom scales the px, so 200% zoom is unaffected. */
+  --row-height:     34px;
 }
 
 /* =========================================================================
@@ -252,7 +266,7 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 /* Every machine value is monospace (DESIGN.md §7) */
 .mono {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-xs);
   letter-spacing: -0.01em;
   font-variant-ligatures: none;
 }
@@ -344,9 +358,9 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 }
 .brand__name {
   font-family: var(--font-heading);
-  font-weight: 700; font-size: 14px; letter-spacing: -0.02em;
+  font-weight: 700; font-size: var(--text-sm); letter-spacing: -0.02em;
 }
-.brand__version { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-subtle); }
+.brand__version { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--color-text-subtle); }
 
 .topbar {
   grid-area: topbar;
@@ -357,7 +371,7 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 }
 .topbar__crumb {
   font-family: var(--font-heading);
-  font-size: 13px; font-weight: 600; letter-spacing: -0.01em;
+  font-size: var(--text-sm); font-weight: 600; letter-spacing: -0.01em;
 }
 .topbar__spacer { flex: 1; }
 /* The menu button has one job per breakpoint: above 860px it collapses the
@@ -375,7 +389,7 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 .sidebar__label {
   padding: var(--space-2) var(--space-2) var(--space-1);
   font-family: var(--font-heading);
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--color-text-subtle);
 }
 .sidebar__spacer { flex: 1; min-height: var(--space-4); }
@@ -387,7 +401,7 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
   border-radius: var(--radius-md);
   color: var(--color-text-muted);
   text-decoration: none;
-  font-size: 13px; font-weight: 500;
+  font-size: var(--text-sm); font-weight: 500;
   border: 1px solid transparent;
   transition: background var(--duration-fast) var(--ease-productive),
               color var(--duration-fast) var(--ease-productive);
@@ -400,12 +414,12 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 }
 .navlink__key {
   margin-left: auto;
-  font-family: var(--font-mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: var(--text-2xs);
   color: var(--color-text-subtle);
 }
 .navlink__count {
   margin-left: auto;
-  font-family: var(--font-mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: var(--text-2xs);
   padding: 1px var(--space-1);
   border-radius: var(--radius-sm);
   background: var(--color-status-warn-bg);
@@ -429,8 +443,8 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
   transition: background var(--duration-fast) var(--ease-productive);
 }
 .instance:hover { background: var(--color-primary-subtle); }
-.instance__name { font-size: 12px; font-weight: 500; }
-.instance__meta { font-family: var(--font-mono); font-size: 10px; color: var(--color-text-subtle); }
+.instance__name { font-size: var(--text-sm); font-weight: 500; }
+.instance__meta { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--color-text-subtle); }
 
 .main {
   grid-area: main;
@@ -455,9 +469,9 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 }
 .screen-head__title {
   font-family: var(--font-heading);
-  font-size: 18px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2;
+  font-size: var(--text-lg); font-weight: 700; letter-spacing: -0.02em; line-height: 1.2;
 }
-.screen-head__sub { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; max-width: 70ch; }
+.screen-head__sub { font-size: var(--text-sm); color: var(--color-text-muted); margin-top: 2px; max-width: 70ch; }
 .screen-head__actions { margin-left: auto; display: flex; gap: var(--space-2); flex: none; }
 
 .toolbar {
@@ -472,7 +486,7 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 .section + .section { padding-top: 0; }
 .section__title {
   font-family: var(--font-heading);
-  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-muted);
   margin-bottom: var(--space-3);
   display: flex; align-items: center; gap: var(--space-2);
@@ -485,9 +499,9 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
   font-family: var(--font-body);
-  font-size: 12px; font-weight: 600;
+  font-size: var(--text-sm); font-weight: 600;
   padding: 0 var(--space-3);
-  height: 30px;
+  min-height: 30px;
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer;
@@ -533,7 +547,7 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
 .btn-danger-solid:hover  { transform: translateY(-1px); box-shadow: var(--shadow-md); background: color-mix(in srgb, var(--color-destructive-raw) 85%, white 15%); }
 .btn-danger-solid:active { transform: translateY(0); box-shadow: var(--shadow-sm); }
 
-.btn-sm { height: 24px; font-size: 11px; padding: 0 var(--space-2); }
+.btn-sm { min-height: 24px; font-size: var(--text-xs); padding: 0 var(--space-2); }
 .btn-block { width: 100%; }
 
 /* Icon-only buttons still clear the 44px touch target on coarse pointers */
@@ -560,18 +574,18 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
    ========================================================================= */
 .field { display: flex; flex-direction: column; gap: var(--space-1); }
 .field__label {
-  font-size: 11px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   color: var(--color-text-muted);
   font-family: var(--font-heading);
   letter-spacing: 0.02em;
 }
-.field__hint { font-size: 11px; color: var(--color-text-subtle); }
+.field__hint { font-size: var(--text-xs); color: var(--color-text-subtle); }
 
 .input {
   width: 100%;
   font-family: var(--font-body);
-  font-size: 13px;
-  height: 30px;
+  font-size: var(--text-sm);
+  min-height: 30px;
   padding: 0 var(--space-3);
   background: var(--color-surface-sunken);
   border: 1px solid var(--color-border);
@@ -612,8 +626,8 @@ select.input {
 
 .kbd {
   display: inline-grid; place-items: center;
-  min-width: 18px; height: 18px; padding: 0 4px;
-  font-family: var(--font-mono); font-size: 10px; line-height: 1;
+  min-width: 18px; min-height: 18px; padding: 0 4px;
+  font-family: var(--font-mono); font-size: var(--text-2xs); line-height: 1;
   color: var(--color-text-subtle);
   background: var(--color-surface-sunken);
   border: 1px solid var(--color-border-subtle);
@@ -693,7 +707,7 @@ select.input {
   border-color: var(--color-border);
 }
 .card__head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
-.card__title { font-family: var(--font-heading); font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.card__title { font-family: var(--font-heading); font-size: var(--text-sm); font-weight: 600; letter-spacing: -0.01em; }
 
 .grid { display: grid; gap: var(--space-3); }
 .grid--instances { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
@@ -701,16 +715,16 @@ select.input {
 
 .stat__label {
   font-family: var(--font-heading);
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
 }
 .stat__value {
   font-family: var(--font-mono);
-  font-size: 22px; font-weight: 600; line-height: 1.2;
+  font-size: var(--text-xl); font-weight: 600; line-height: 1.2;
   font-variant-numeric: tabular-nums;
   margin-top: var(--space-1);
 }
-.stat__delta { font-family: var(--font-mono); font-size: 11px; margin-top: 2px; }
+.stat__delta { font-family: var(--font-mono); font-size: var(--text-xs); margin-top: 2px; }
 
 /* =========================================================================
    BADGES + STATUS (DESIGN.md §4 / §7)
@@ -721,7 +735,7 @@ select.input {
   padding: 1px var(--space-2);
   border-radius: 9999px;
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600; line-height: 16px;
+  font-size: var(--text-xs); font-weight: 600; line-height: 1.35;
   letter-spacing: 0.02em;
   white-space: nowrap;
   border: 1px solid transparent;
@@ -760,7 +774,7 @@ select.input {
    ========================================================================= */
 .table-wrap { min-width: 0; }
 
-.table { font-size: 12px; }
+.table { font-size: var(--text-xs); }
 .table thead th {
   position: sticky; top: 0; z-index: 2;
   background: var(--color-surface);
@@ -768,7 +782,7 @@ select.input {
   padding: var(--space-2);
   text-align: left;
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
   white-space: nowrap;
@@ -821,7 +835,7 @@ select.input {
     56px;                 /* peers    */
   display: flex; flex-direction: column;
   min-height: 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .qgrid__row {
@@ -835,7 +849,7 @@ select.input {
   position: sticky; top: 0; z-index: 2;
   background: var(--color-surface);
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
   user-select: none;
@@ -852,7 +866,7 @@ select.input {
 .qgrid__sort:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 /* The caret is the second, non-colour channel for sort direction — `aria-sort`
    carries it for AT, this carries it for everyone else (DESIGN.md §7). */
-.qgrid__sort .sort-caret { font-size: 8px; line-height: 1; color: var(--color-primary); }
+.qgrid__sort .sort-caret { font-size: 0.7em; line-height: 1; color: var(--color-primary); }
 
 /* `contain: strict` includes size containment, so this element is sized as if
    it were empty — it cannot derive a height from rows the virtualizer positions
@@ -971,7 +985,7 @@ select.input {
 }
 .stoolbar__label {
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
   flex: none;
@@ -1009,7 +1023,7 @@ select.input {
 
 @media (max-width: 767px) {
   /* ≥44px targets on touch (NFR7). */
-  .stoolbar .input, .stoolbar .btn { height: 44px; }
+  .stoolbar .input, .stoolbar .btn { min-height: 44px; }
   .stoolbar__query { flex-wrap: wrap; }
   .stoolbar__query .btn { width: 100%; justify-content: center; }
 }
@@ -1031,7 +1045,7 @@ select.input {
     64px;                 /* age      */
   display: flex; flex-direction: column;
   min-height: 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .rgrid__row {
@@ -1045,7 +1059,7 @@ select.input {
   position: sticky; top: 0; z-index: 2;
   background: var(--color-surface);
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
   user-select: none;
@@ -1064,7 +1078,7 @@ select.input {
 }
 .rgrid__sort:hover { color: var(--color-foreground); }
 .rgrid__sort:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
-.rgrid__sort .sort-caret { font-size: 8px; line-height: 1; color: var(--color-primary); }
+.rgrid__sort .sort-caret { font-size: 0.7em; line-height: 1; color: var(--color-primary); }
 
 /* Sized explicitly by the component for the same reason .qgrid__scroll is —
    `contain: strict` includes size containment, so this element cannot derive a
@@ -1113,7 +1127,7 @@ select.input {
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 9px; font-weight: 600; line-height: 14px;
+  font-size: var(--text-2xs); font-weight: 600; line-height: 1.4;
   letter-spacing: 0.04em;
   color: var(--color-accent);
   vertical-align: baseline;
@@ -1150,7 +1164,7 @@ select.input {
     92px;                 /* last search */
   display: flex; flex-direction: column;
   min-height: 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .ggrid__row {
@@ -1164,7 +1178,7 @@ select.input {
   position: sticky; top: 0; z-index: 2;
   background: var(--color-surface);
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
   user-select: none;
@@ -1217,14 +1231,14 @@ select.input {
 }
 .ggrid__group-title {
   font-family: var(--font-heading);
-  font-size: 12px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   color: var(--color-foreground);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ggrid__group-meta {
   flex: none;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--color-text-muted);
 }
 /* Pushed right and dimmed: which instance a group came from matters when two
@@ -1232,7 +1246,7 @@ select.input {
 .ggrid__group-instance {
   margin-left: auto;
   flex: none;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--color-text-subtle);
 }
 
@@ -1304,7 +1318,7 @@ select.input {
 .banner { align-items: flex-start; }
 .banner__line {
   display: flex; align-items: baseline; gap: var(--space-3);
-  font-size: 12px; line-height: 1.5;
+  font-size: var(--text-base); line-height: 1.5;
 }
 .banner__line + .banner__line { margin-top: var(--space-2); }
 .banner__line > span { flex: 1; min-width: 0; }
@@ -1324,7 +1338,7 @@ select.input {
 .msg-list > li {
   border-left: 2px solid var(--color-border-strong);
   padding-left: var(--space-3);
-  font-size: 12px; line-height: 1.5;
+  font-size: var(--text-base); line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .msg-list--nested {
@@ -1334,7 +1348,7 @@ select.input {
 .msg-list--nested > li {
   border-left: 0; padding-left: 0;
   color: var(--color-text-muted);
-  font-family: var(--font-mono); font-size: 11px;
+  font-family: var(--font-mono); font-size: var(--text-xs);
 }
 
 /* -------------------------------------------------------------------------
@@ -1353,7 +1367,7 @@ select.input {
   min-width: 0;
 }
 .removal-list > li + li { border-top: 1px solid var(--color-border-subtle); }
-.removal-list .subtle { font-size: 11px; }
+.removal-list .subtle { font-size: var(--text-xs); }
 
 .removal-flags {
   border: 0; margin: var(--space-4) 0; padding: 0;
@@ -1361,7 +1375,7 @@ select.input {
 }
 .removal-flag {
   display: flex; align-items: flex-start; gap: var(--space-3);
-  font-size: 12px; line-height: 1.4;
+  font-size: var(--text-xs); line-height: 1.4;
   cursor: pointer;
 }
 .removal-flag .checkbox { flex: none; margin-top: 1px; }
@@ -1380,7 +1394,7 @@ select.input {
 .row-group__poster.poster-fallback { font-size: 0; }
 .row-group__name {
   font-family: var(--font-heading);
-  font-size: 11px; font-weight: 600; letter-spacing: 0.01em;
+  font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.01em;
 }
 
 .empty {
@@ -1389,8 +1403,8 @@ select.input {
   text-align: center;
   color: var(--color-text-muted);
 }
-.empty__title { font-family: var(--font-heading); font-size: 13px; font-weight: 600; color: var(--color-foreground); }
-.empty__body { font-size: 12px; max-width: 46ch; }
+.empty__title { font-family: var(--font-heading); font-size: var(--text-sm); font-weight: 600; color: var(--color-foreground); }
+.empty__body { font-size: var(--text-base); max-width: 46ch; }
 
 /* =========================================================================
    GUIDED FIRST RUN — what the list screens show before anything is connected
@@ -1406,11 +1420,11 @@ select.input {
   text-align: center;
 }
 .firstrun__title {
-  font-family: var(--font-heading); font-size: 18px; font-weight: 600;
+  font-family: var(--font-heading); font-size: var(--text-lg); font-weight: 600;
   color: var(--color-foreground);
 }
-.firstrun__lede { font-size: 12px; color: var(--color-text-muted); max-width: 52ch; }
-.firstrun__note { font-size: 12px; }
+.firstrun__lede { font-size: var(--text-base); color: var(--color-text-muted); max-width: 52ch; }
+.firstrun__note { font-size: var(--text-sm); }
 
 .firstrun__cards {
   list-style: none; margin: var(--space-2) 0 0; padding: 0;
@@ -1430,10 +1444,10 @@ select.input {
 .firstrun__card + .firstrun__card { border-top: 1px solid var(--color-border-subtle); }
 .firstrun__icon { flex: none; color: var(--color-text-muted); display: flex; }
 .firstrun__copy { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
-.firstrun__name { font-size: 12px; font-weight: 600; color: var(--color-foreground); }
-.firstrun__what { font-size: 12px; color: var(--color-text-muted); }
-.firstrun__unlocks { font-size: 11px; color: var(--color-text-subtle); }
-.firstrun__state { flex: none; font-size: 11px; }
+.firstrun__name { font-size: var(--text-sm); font-weight: 600; color: var(--color-foreground); }
+.firstrun__what { font-size: var(--text-sm); color: var(--color-text-muted); }
+.firstrun__unlocks { font-size: var(--text-xs); color: var(--color-text-subtle); }
+.firstrun__state { flex: none; font-size: var(--text-xs); }
 
 .firstrun__nudge { padding: 0 var(--space-5) var(--space-3); }
 .firstrun__nudge .callout { align-items: center; }
@@ -1470,12 +1484,12 @@ select.input {
 }
 .inspector__eyebrow {
   font-family: var(--font-heading);
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--color-text-subtle);
 }
 .inspector__title {
   font-family: var(--font-mono);
-  font-size: 12px; font-weight: 500; line-height: 1.45;
+  font-size: var(--text-sm); font-weight: 500; line-height: 1.45;
   margin-top: 2px;
   word-break: break-all;
 }
@@ -1503,26 +1517,26 @@ select.input {
   display: grid; place-items: center;
   font-family: var(--font-heading);
   font-weight: 700;
-  font-size: 34px;
+  font-size: var(--text-3xl);
   letter-spacing: 0.06em;
   color: var(--color-text-subtle);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
 }
 
-.kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-2) var(--space-3); font-size: 12px; }
+.kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-2) var(--space-3); font-size: var(--text-xs); }
 .kv__k {
   font-family: var(--font-heading);
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--color-text-subtle);
   padding-top: 2px;
 }
-.kv__v { font-family: var(--font-mono); font-size: 12px; word-break: break-word; }
+.kv__v { font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-word; }
 
 .inspector__group + .inspector__group { margin-top: var(--space-5); }
 .inspector__group-title {
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
   padding-bottom: var(--space-2);
   margin-bottom: var(--space-3);
@@ -1545,7 +1559,7 @@ select.input {
 }
 @keyframes bulkbar-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 .bulkbar__count {
-  font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+  font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .bulkbar__spacer { flex: 1; }
@@ -1576,15 +1590,15 @@ select.input {
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
 
 .modal__head { padding: var(--space-4) var(--space-4) var(--space-3); border-bottom: 1px solid var(--color-border-subtle); }
-.modal__title { font-family: var(--font-heading); font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
-.modal__body { padding: var(--space-4); overflow-y: auto; font-size: 13px; }
+.modal__title { font-family: var(--font-heading); font-size: var(--text-base); font-weight: 700; letter-spacing: -0.01em; }
+.modal__body { padding: var(--space-4); overflow-y: auto; font-size: var(--text-base); }
 .modal__foot { display: flex; gap: var(--space-2); justify-content: flex-end; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border-subtle); }
 
 /* The keyboard shortcut reference. Two columns rather than a table: the keys
    are the thing being looked up, so they get the fixed edge to scan down. */
 .shortcuts { display: flex; flex-direction: column; gap: var(--space-4); }
 .shortcuts__heading {
-  font-family: var(--font-heading); font-size: 10px; font-weight: 600;
+  font-family: var(--font-heading); font-size: var(--text-xs); font-weight: 600;
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--color-text-subtle);
   margin-bottom: var(--space-2);
@@ -1595,8 +1609,8 @@ select.input {
   display: flex; align-items: center; gap: 3px;
   flex: none; width: 96px;
 }
-.shortcuts__desc { margin: 0; font-size: 12px; color: var(--color-foreground); min-width: 0; }
-.shortcuts__note { font-size: 11px; max-width: 52ch; }
+.shortcuts__desc { margin: 0; font-size: var(--text-sm); color: var(--color-foreground); min-width: 0; }
+.shortcuts__note { font-size: var(--text-xs); max-width: 52ch; }
 
 @media (max-width: 639px) {
   /* The keys move above their description rather than squeezing a 96px gutter
@@ -1611,7 +1625,7 @@ select.input {
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-sunken);
-  font-size: 12px;
+  font-size: var(--text-base);
   line-height: 1.5;
 }
 .callout > svg { flex: none; margin-top: 1px; }
@@ -1631,12 +1645,12 @@ select.input {
 .oplog__row:last-child { border-bottom: 0; }
 
 .oplog__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.oplog__outcome { font-size: 12px; font-weight: 600; }
-.oplog__at { font-size: 11px; font-variant-numeric: tabular-nums; }
+.oplog__outcome { font-size: var(--text-xs); font-weight: 600; }
+.oplog__at { font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 
-.oplog__summary { font-size: 12px; margin-top: var(--space-2); }
-.oplog__title { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
-.oplog__meta { font-size: 11px; margin-top: 2px; }
+.oplog__summary { font-size: var(--text-xs); margin-top: var(--space-2); }
+.oplog__title { font-size: var(--text-xs); color: var(--color-text-muted); margin-top: 2px; }
+.oplog__meta { font-size: var(--text-xs); margin-top: 2px; }
 .oplog__detail { margin-top: var(--space-2); }
 
 /* The timestamp drops under the outcome word before the row starts wrapping
@@ -1652,14 +1666,14 @@ select.input {
   .oplog-toolbar .chip-row { flex-wrap: nowrap; overflow-x: auto; width: 100%; padding-bottom: var(--space-1); }
   /* Destructive, and directly under a scrollable strip — it gets a full-width
      44px target rather than the compact toolbar height. */
-  .oplog-purge { width: 100%; height: 44px; }
+  .oplog-purge { width: 100%; min-height: 44px; }
 }
 
 /* =========================================================================
    GRAB CONFIRMATION — the one dialog that precedes a write to an *arr
    ========================================================================= */
 .dest-row { border: 0; padding: 0; margin: var(--space-4) 0 0; }
-.dest-row__legend { padding: 0; font-size: 11px; color: var(--color-text-muted); }
+.dest-row__legend { padding: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
 .dest-row__chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 
 /* The radio inside is `sr-only`, so the ring has to be drawn by the label it
@@ -1670,7 +1684,7 @@ select.input {
 
 /* A magnet URI is one unbroken ~200-character token. Without an explicit break
    it widens the dialog past the viewport instead of wrapping inside it. */
-.attach-link { font-size: 12px; word-break: break-all; }
+.attach-link { font-size: var(--text-xs); word-break: break-all; }
 
 /* The items a bulk search will cover, listed rather than counted. Scrolls past
    a dozen or so rather than pushing the confirming button off the screen —
@@ -1681,7 +1695,7 @@ select.input {
   padding: 0;
   max-height: 34vh;
   overflow-y: auto;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .bulk-list li {
   display: flex; align-items: baseline; gap: var(--space-2);
@@ -1689,8 +1703,8 @@ select.input {
   min-width: 0;
 }
 .bulk-list__group { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.bulk-list__codes { color: var(--color-text-muted); font-size: 11px; min-width: 0; }
-.bulk-list__instance { margin-left: auto; flex: none; font-size: 10px; color: var(--color-text-subtle); }
+.bulk-list__codes { color: var(--color-text-muted); font-size: var(--text-xs); min-width: 0; }
+.bulk-list__instance { margin-left: auto; flex: none; font-size: var(--text-2xs); color: var(--color-text-subtle); }
 
 .grab-resolve { margin: var(--space-4) 0; display: grid; gap: var(--space-2); }
 .grab-target { padding: var(--space-3); background: var(--color-surface-sunken); }
@@ -1705,7 +1719,7 @@ select.input {
 }
 .season-pick legend {
   padding: 0 var(--space-2);
-  font-size: 11px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   color: var(--color-text-muted);
 }
 .season-pick__option {
@@ -1714,7 +1728,7 @@ select.input {
   min-height: 36px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 .season-pick__option:hover { background: var(--color-primary-subtle); }
@@ -1722,14 +1736,14 @@ select.input {
   outline: 2px solid var(--color-ring); outline-offset: 2px;
 }
 /* The count is the secondary fact, so it goes to the far edge and stays quiet. */
-.season-pick__option .subtle { margin-left: auto; font-size: 11px; }
+.season-pick__option .subtle { margin-left: auto; font-size: var(--text-xs); }
 
 /* Collapsed after the choice: the season stays visible next to the resolved
    counts without the chooser occupying the dialog. */
 .season-pick__chosen {
   display: flex; align-items: center; gap: var(--space-3);
   margin: 0 0 var(--space-4);
-  font-size: 13px; font-weight: 600;
+  font-size: var(--text-sm); font-weight: 600;
 }
 .season-pick__chosen .btn { margin-left: auto; }
 
@@ -1740,7 +1754,7 @@ select.input {
 /* =========================================================================
    RENAME DIFF
    ========================================================================= */
-.diff { font-family: var(--font-mono); font-size: 11px; line-height: 1.6; }
+.diff { font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; }
 .diff__row { display: flex; gap: var(--space-2); padding: 2px var(--space-2); border-radius: var(--radius-sm); }
 .diff__sign { flex: none; width: 10px; font-weight: 700; }
 .diff__path { word-break: break-all; }
@@ -1949,7 +1963,7 @@ select.input {
   position: sticky; top: 0; z-index: 2;
   background: var(--color-surface);
   font-family: var(--font-heading);
-  font-size: 10px; font-weight: 600;
+  font-size: var(--text-xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--color-text-subtle);
   user-select: none;
@@ -2005,7 +2019,7 @@ select.input {
   border-radius: var(--radius-sm);
   background: var(--color-status-warn-bg);
   color: var(--color-status-warn);
-  font-size: 10px;
+  font-size: var(--text-2xs);
 }
 .pgrid__flag > svg { flex: none; }
 .pgrid__flag-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2029,8 +2043,8 @@ select.input {
   color: var(--color-foreground);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.pgrid__group-meta { flex: none; font-family: var(--font-mono); font-size: 10px; color: var(--color-text-muted); }
-.pgrid__group-instance { margin-left: auto; flex: none; font-size: 10px; color: var(--color-text-subtle); }
+.pgrid__group-meta { flex: none; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--color-text-muted); }
+.pgrid__group-instance { margin-left: auto; flex: none; font-size: var(--text-2xs); color: var(--color-text-subtle); }
 
 /* Responsive collapse. The include column and the before/after never drop:
    one is how the plan is narrowed, the other is the plan. */
@@ -2168,7 +2182,7 @@ select.input {
 .filter-chip {
   display: inline-flex; align-items: center; gap: var(--space-2);
   min-height: 32px; padding: 0 var(--space-3);
-  font-size: 11px; font-weight: 500;
+  font-size: var(--text-xs); font-weight: 500;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-sunken);
@@ -2191,7 +2205,7 @@ select.input {
   background: var(--color-surface-sunken);
 }
 .filter-chip.is-degraded:hover { background: var(--color-surface-sunken); }
-.filter-chip__glyph { font-size: 10px; line-height: 1; flex: none; }
+.filter-chip__glyph { font-size: 0.8em; line-height: 1; flex: none; }
 .filter-chip__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filter-chip__count { color: var(--color-text-subtle); font-variant-numeric: tabular-nums; }
 
@@ -2199,7 +2213,7 @@ select.input {
   display: flex; align-items: center; gap: var(--space-3);
   padding: var(--space-2) var(--space-5);
   border-top: 1px solid var(--color-border-subtle);
-  font-size: 11px; color: var(--color-text-subtle);
+  font-size: var(--text-xs); color: var(--color-text-subtle);
   flex-wrap: wrap;
 }
 .hint { display: inline-flex; align-items: center; gap: var(--space-1); }
@@ -2221,7 +2235,7 @@ select.input {
 .toast {
   display: flex; align-items: flex-start; gap: var(--space-2);
   padding: var(--space-3);
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: var(--color-surface-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -2286,16 +2300,16 @@ select.input {
    COARSE POINTER (NFR7, DESIGN.md §7 §8) — last in the file on purpose
    ========================================================================= */
 @media (pointer: coarse) {
-  .btn { height: 44px; padding: 0 var(--space-4); font-size: 14px; }
+  .btn { min-height: 44px; padding: 0 var(--space-4); font-size: var(--text-base); }
   /* No exception for the small variant. `btn-sm` is a density choice for a
      mouse; on a finger it is a 24px target inside a design contract that says
      44, and the controls wearing it are the consequential ones — Grab, Purge,
      Remove. */
-  .btn-sm { height: 44px; }
+  .btn-sm { min-height: 44px; }
   .icon-btn { width: 44px; height: 44px; }
   .filter-chip { min-height: 44px; padding: 0 var(--space-4); }
   /* Text fields and selects are targets too: tapping one is how it is reached. */
-  .input { height: 44px; }
+  .input { min-height: 44px; }
   /* A column header is a target as well — mis-tapping one re-sorts the list.
      Its width belongs to the column, and a six-column grid has no 44px to give
      a numeric one on a phone; the height is ours, and is set. */

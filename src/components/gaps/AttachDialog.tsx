@@ -85,7 +85,7 @@ export default function AttachDialog({ gap, onCancel, onConfirm, busy }: AttachD
       <label
         className="subtle"
         htmlFor="attach-link"
-        style={{ display: 'block', fontSize: 11, marginBottom: 'var(--space-2)' }}
+        style={{ display: 'block', fontSize: 'var(--text-xs)', marginBottom: 'var(--space-2)' }}
       >
         Magnet link or .torrent URL
       </label>
@@ -106,7 +106,7 @@ export default function AttachDialog({ gap, onCancel, onConfirm, busy }: AttachD
       <p
         id="attach-link-note"
         className="subtle"
-        style={{ fontSize: 11, marginTop: 'var(--space-2)' }}
+        style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-2)' }}
       >
         Paste the link exactly as copied from the indexer.
       </p>
@@ -120,7 +120,7 @@ export default function AttachDialog({ gap, onCancel, onConfirm, busy }: AttachD
 
       <div className="grab-resolve">
         {preview.isPending ? (
-          <p className="subtle" style={{ fontSize: 12 }}>
+          <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
             Asking {gap.instanceLabel} what it makes of the name helparr would send…
           </p>
         ) : preview.isError ? (
@@ -158,14 +158,14 @@ export default function AttachDialog({ gap, onCancel, onConfirm, busy }: AttachD
           </Callout>
         ) : (
           <>
-            <p className="subtle" style={{ fontSize: 11 }}>Will import as</p>
+            <p className="subtle" style={{ fontSize: 'var(--text-xs)' }}>Will import as</p>
             <div className="grab-target card">
-              <p style={{ fontWeight: 600, fontSize: 13 }}>
+              <p style={{ fontWeight: 600, fontSize: 'var(--text-base)' }}>
                 {preview.data.target.label ?? 'an untitled entry'}
               </p>
-              <p className="subtle" style={{ fontSize: 11, marginTop: 2 }}>{gap.title}</p>
+              <p className="subtle" style={{ fontSize: 'var(--text-xs)', marginTop: 2 }}>{gap.title}</p>
               {preview.data.path ? (
-                <p className="subtle mono" style={{ fontSize: 11, marginTop: 2 }}>
+                <p className="subtle mono" style={{ fontSize: 'var(--text-xs)', marginTop: 2 }}>
                   {preview.data.path}
                 </p>
               ) : null}
@@ -185,13 +185,13 @@ export default function AttachDialog({ gap, onCancel, onConfirm, busy }: AttachD
       {/* The name being offered, shown plainly. It is the whole mechanism, and
           hiding it would make every branch above unexplainable. */}
       {preview.data ? (
-        <p className="subtle mono truncate" style={{ fontSize: 11 }}>
+        <p className="subtle mono truncate" style={{ fontSize: 'var(--text-xs)' }}>
           sending as {preview.data.title}
         </p>
       ) : null}
 
       {busy ? (
-        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 12 }}>
+        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 'var(--text-sm)' }}>
           Sending to {gap.instanceLabel}…
         </p>
       ) : (

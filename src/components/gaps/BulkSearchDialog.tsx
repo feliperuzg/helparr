@@ -86,7 +86,7 @@ export default function BulkSearchDialog({
         </>
       )}
     >
-      <p style={{ fontSize: 13 }}>
+      <p style={{ fontSize: 'var(--text-base)' }}>
         helparr will ask each instance to search automatically for {count === 1 ? 'this' : 'these'}{' '}
         {count} {count === 1 ? 'item' : 'items'}:
       </p>
@@ -110,13 +110,13 @@ export default function BulkSearchDialog({
 
       {/* What the command does and does not do. The instance searches; helparr
           only asked, and the gaps stay listed either way. */}
-      <p className="subtle" style={{ fontSize: 11 }}>
+      <p className="subtle" style={{ fontSize: 'var(--text-xs)' }}>
         The instances run the searches themselves. helparr reports whether each one accepted the
         command, not what it found — anything grabbed shows up in the queue.
       </p>
 
       {busy ? (
-        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 12 }}>
+        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 'var(--text-sm)' }}>
           Sending the commands…
         </p>
       ) : null}

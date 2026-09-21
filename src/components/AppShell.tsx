@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 
+import BrandMark from './BrandMark';
 import Icon, { type IconName } from './Icon';
 import ShortcutsDialog from './ShortcutsDialog';
 import { isDialogOpen, StatusDot } from './ui';
@@ -162,7 +163,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <a className="skip-link" href="#main">Skip to content</a>
 
       <div className="brand">
-        <span className="brand__mark" aria-hidden="true"><Icon name="plug" size={13} /></span>
+        {/* The mark, not a plug. 16px matches `menu` below — the topbar's largest
+            icon — rather than the 13px the plug used: these are four filled
+            ribbons, and a fill at a stroke glyph's nominal size reads lighter
+            than the stroke does. 16 is the mark's width; the 22px box absorbs
+            the ~11px height it derives. */}
+        <span className="brand__mark" aria-hidden="true"><BrandMark size={16} /></span>
         <span className="brand__name">helparr</span>
         <span className="brand__version">0.1.0</span>
       </div>
@@ -244,7 +250,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div className="sidebar__section">
           <div className="sidebar__label" id="instances-label">Instances</div>
           {instances.length === 0 ? (
-            <p className="subtle" style={{ padding: '0 var(--space-2)', fontSize: 12 }}>
+            <p className="subtle" style={{ padding: '0 var(--space-2)', fontSize: 'var(--text-sm)' }}>
               {health.isPending ? 'Checking…' : 'None configured yet.'}
             </p>
           ) : (

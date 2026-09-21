@@ -149,7 +149,7 @@ export default function SeasonAttachDialog({
           <label
             className="subtle"
             htmlFor="season-attach-link"
-            style={{ display: 'block', fontSize: 11, marginBottom: 'var(--space-2)' }}
+            style={{ display: 'block', fontSize: 'var(--text-xs)', marginBottom: 'var(--space-2)' }}
           >
             Magnet link or .torrent URL
           </label>
@@ -168,7 +168,7 @@ export default function SeasonAttachDialog({
           <p
             id="season-attach-link-note"
             className="subtle"
-            style={{ fontSize: 11, marginTop: 'var(--space-2)' }}
+            style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-2)' }}
           >
             Paste the link exactly as copied from the indexer.
           </p>
@@ -182,7 +182,7 @@ export default function SeasonAttachDialog({
 
           <div className="grab-resolve">
             {preview.isPending ? (
-              <p className="subtle" style={{ fontSize: 12 }}>
+              <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
                 Asking {gap.instanceLabel} what it makes of the name helparr would send…
               </p>
             ) : preview.isError ? (
@@ -222,19 +222,19 @@ export default function SeasonAttachDialog({
                   </Callout>
                 ) : (
                   <>
-                    <p className="subtle" style={{ fontSize: 11 }}>Will import as</p>
+                    <p className="subtle" style={{ fontSize: 'var(--text-xs)' }}>Will import as</p>
                     <div className="grab-target card">
-                      <p style={{ fontWeight: 600, fontSize: 13 }}>{scope}</p>
+                      <p style={{ fontWeight: 600, fontSize: 'var(--text-base)' }}>{scope}</p>
                       {/* The instance's own count of what the name resolved to.
                           helparr never restates the episode set (FR4). */}
                       {data.target.episodeCount > 0 ? (
-                        <p className="subtle" style={{ fontSize: 11, marginTop: 2 }}>
+                        <p className="subtle" style={{ fontSize: 'var(--text-xs)', marginTop: 2 }}>
                           {gap.instanceLabel} resolved {data.target.episodeCount}{' '}
                           {data.target.episodeCount === 1 ? 'episode' : 'episodes'}
                         </p>
                       ) : null}
                       {data.path ? (
-                        <p className="subtle mono" style={{ fontSize: 11, marginTop: 2 }}>
+                        <p className="subtle mono" style={{ fontSize: 'var(--text-xs)', marginTop: 2 }}>
                           {data.path}
                         </p>
                       ) : null}
@@ -291,7 +291,7 @@ export default function SeasonAttachDialog({
               a season token and no episode token — and hiding it would make
               every branch above unexplainable (REQ-GAPS-019). */}
           {data ? (
-            <p className="subtle mono truncate" style={{ fontSize: 11 }}>
+            <p className="subtle mono truncate" style={{ fontSize: 'var(--text-xs)' }}>
               sending as {data.title}
             </p>
           ) : null}
@@ -299,7 +299,7 @@ export default function SeasonAttachDialog({
       )}
 
       {busy ? (
-        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 12 }}>
+        <p className="subtle" aria-busy="true" role="status" style={{ fontSize: 'var(--text-sm)' }}>
           Sending to {gap.instanceLabel}…
         </p>
       ) : (

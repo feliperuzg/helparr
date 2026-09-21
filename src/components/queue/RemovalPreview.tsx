@@ -99,7 +99,7 @@ export default function RemovalPreview({
         </>
       )}
     >
-      <p style={{ marginBottom: 'var(--space-3)', fontSize: 12 }}>
+      <p style={{ marginBottom: 'var(--space-3)', fontSize: 'var(--text-sm)' }}>
         {count === 1 ? 'This item' : `These ${count} items`} will be affected:
       </p>
 

@@ -67,7 +67,7 @@ export default function DegradedBanner({
             </button>
           </div>
         ))}
-        <p className="subtle" style={{ fontSize: 12, marginTop: 'var(--space-1)' }}>
+        <p className="subtle" style={{ fontSize: 'var(--text-sm)', marginTop: 'var(--space-1)' }}>
           {/* The screen never blanks: whatever was read still renders. */}
           Showing {shownRows} row{shownRows === 1 ? '' : 's'} from the instances that answered.
         </p>

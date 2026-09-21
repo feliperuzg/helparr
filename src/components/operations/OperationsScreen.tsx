@@ -110,7 +110,7 @@ export default function OperationsScreen() {
                   : 'Could not read the operation log.'}
               </Callout>
             ) : operations.isPending ? (
-              <p className="subtle" style={{ fontSize: 12 }}>Reading the log…</p>
+              <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>Reading the log…</p>
             ) : rows.length === 0 ? (
               <EmptyState title={filter === 'all' ? 'No operations recorded' : `No ${CHIP_LABEL[filter].toLowerCase()} operations`}>
                 {filter === 'all'
@@ -126,7 +126,7 @@ export default function OperationsScreen() {
 
           {counts ? (
             <section className="section">
-              <p className="subtle" style={{ fontSize: 11 }}>
+              <p className="subtle" style={{ fontSize: 'var(--text-xs)' }}>
                 {filter === 'all'
                   ? `${total} operation${total === 1 ? '' : 's'}`
                   : `${rows.length} of ${total} operations`}

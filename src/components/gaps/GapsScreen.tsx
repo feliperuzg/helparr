@@ -351,7 +351,7 @@ export default function GapsScreen() {
           {/* The number the bulk action will act on, updated on every keystroke
               — so "Search 5 gaps" can be checked against it before it is
               pressed (D8). */}
-          <span className="subtle" style={{ fontSize: 12 }} role="status">
+          <span className="subtle" style={{ fontSize: 'var(--text-sm)' }} role="status">
             {visible.length} of {gaps.length} shown
           </span>
         </div>

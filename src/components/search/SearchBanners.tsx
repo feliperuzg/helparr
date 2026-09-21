@@ -108,7 +108,7 @@ export function OutageCallout({
       <Icon name="alert" size={14} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <strong>Search is unavailable</strong>
-        <p style={{ fontSize: 12, marginTop: 'var(--space-2)' }}>
+        <p style={{ fontSize: 'var(--text-sm)', marginTop: 'var(--space-2)' }}>
           {outage.instanceLabel === null ? (
             <>
               No Prowlarr instance is configured. Prowlarr is the only path to an aggregate
@@ -126,7 +126,7 @@ export function OutageCallout({
             </>
           )}
         </p>
-        <p className="subtle" style={{ fontSize: 12, marginTop: 'var(--space-2)' }}>
+        <p className="subtle" style={{ fontSize: 'var(--text-sm)', marginTop: 'var(--space-2)' }}>
           Other screens are unaffected.
         </p>
         <div className="banner__line" style={{ marginTop: 'var(--space-3)', justifyContent: 'flex-end' }}>
