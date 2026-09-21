@@ -1,12 +1,12 @@
-# Local databases
-.dolt/
-*.db
-
 # Node / Next.js
 node_modules/
 .next/
 next-env.d.ts
 tsconfig.tsbuildinfo
+
+# The operator's database and its WAL sidecars. Encrypted at rest, and still
+# never something to commit.
+*.db
 *.db-shm
 *.db-wal
 

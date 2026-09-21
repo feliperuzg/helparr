@@ -94,8 +94,10 @@ is built:
 | Bulk rename with preview-then-apply | ✅ shipped |
 | Packaging, saved searches, keyboard layer, WCAG AA floor | ✅ shipped |
 
-Seven changes; 120 requirements and 187 scenarios across nine capabilities,
-all specified and reviewed before they were built. Nothing is in flight.
+Every row above shipped as a specified change — requirements and acceptance
+criteria written down before the code, then the gates. The specification
+documents themselves are kept outside this repository; the test suites are
+their executable half, and they are all here.
 
 What has *not* happened is a release. There is no tag, no image on any registry,
 and no install path that doesn't start with `git clone` — the deployment
@@ -497,8 +499,8 @@ built for.
   instead of the app.
 - **Preview-then-apply** is a hard requirement for every destructive operation.
 - **A three-layer CSS token contract** (primitive → semantic → derived) defined
-  in the design contract; no hardcoded colors in
-  components.
+  in [`src/app/globals.css`](src/app/globals.css); no hardcoded colors or font
+  sizes in components.
 
 ---
 

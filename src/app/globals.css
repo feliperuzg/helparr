@@ -1,7 +1,10 @@
 /* =========================================================================
-   helparr — prototype stylesheet
-   Mirrors the design contract at ../../design/DESIGN.md (9-section format).
-   DO NOT diverge. Edit the contract.
+   helparr — application stylesheet
+
+   This file IS the design contract: the three token layers below (primitive →
+   semantic → derived) are the only place a colour, a font size or a spacing
+   step is allowed to be defined. Components reference tokens and never
+   literals — `test/type-scale.test.ts` enforces that for type.
 
    Style:      Dark Mode (OLED) + Minimalism
    Palette:    Smart Home/IoT Dashboard (brand hue H = 217)

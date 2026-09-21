@@ -13,8 +13,9 @@
 # paid larger runner here; it no longer does. Private-repo arm runners get
 # 2 vCPU against a public repo's 4, so the arm64 leg is the slow one.
 #
-# The package is PRIVATE and this workflow does nothing to change that: GHCR
-# defaults to private on first publish, and public → private is not reversible.
+# This workflow does not set the package's visibility, and deliberately so:
+# GHCR defaults to private on first publish, and flipping a package public is a
+# one-way door that no CI run should be able to walk through by itself.
 
 name: publish
 
