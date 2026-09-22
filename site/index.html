@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>helparr — self-hosted web companion for Sonarr, Radarr and Prowlarr</title>
+<meta name="description" content="Self-hosted web companion for Sonarr, Radarr and Prowlarr — one queue across every instance that flags stalled downloads, plus manual search and grab, missing-episode hunting and rename previews.">
+<link rel="canonical" href="https://feliperuzg.github.io/helparr/">
+
+<!-- Link preview. og:image must be absolute — the Open Graph spec requires it
+     and no crawler resolves a relative path. It is the only absolute internal
+     URL on the page, and the FR14 link check special-cases it by stripping the
+     site's own origin and resolving the remainder inside the built tree.
+     The image is docs/screenshots/overview.png, already in the repository:
+     FR4 forbids a second, separately maintained image set. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="helparr">
+<meta property="og:url" content="https://feliperuzg.github.io/helparr/">
+<meta property="og:title" content="helparr — self-hosted web companion for Sonarr, Radarr and Prowlarr">
+<meta property="og:description" content="Self-hosted web companion for Sonarr, Radarr and Prowlarr — one queue across every instance that flags stalled downloads, plus manual search and grab, missing-episode hunting and rename previews.">
+<meta property="og:image" content="https://feliperuzg.github.io/helparr/screenshots/overview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="720">
+<meta property="og:image:alt" content="The helparr Overview screen: four connected instances and a unified queue, one row flagged as stalled">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="./logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="container site-header__inner">
+    <a class="wordmark" href="#main">helparr</a>
+    <nav class="site-nav" aria-label="Sections">
+      <a href="#what">What it is</a>
+      <a href="#screens">Screens</a>
+      <a href="#install">Install</a>
+      <a href="#limits">Limits</a>
+      <a href="https://github.com/feliperuzg/helparr">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ===================== Hero — FR3, FR5 ===================== -->
+  <section class="band band--flush hero">
+    <div class="container">
+      <!-- FR3 / REQ-SITE-005: byte-identical to the repository description.
+           data-fact is the anchor the FR9 check reads.
+
+           Split at the sentence's own em dash so the first clause can carry the
+           headline and the rest can be read. The two spans sit on one source
+           line with no whitespace between them on purpose: `textContent` then
+           equals the description exactly, so the check needs no normalisation
+           and cannot be fooled by re-indentation. -->
+      <h1 data-fact="description"><span class="hero__h1-lead">Self-hosted web companion for Sonarr, Radarr and Prowlarr</span><span class="hero__h1-rest"> — one queue across every instance that flags stalled downloads, plus manual search and grab, missing-episode hunting and rename previews.</span></h1>
+
+      <p class="hero__lede">
+        It talks to your already-configured stack over its own APIs and gives you
+        the operations those tools bury or omit. A companion, not a replacement:
+        Sonarr and Radarr stay the source of truth.
+      </p>
+
+      <!-- FR5: copy-pasteable, above the fold, and it works with no docker login. -->
+      <div class="cmd">
+        <div class="cmd__bar">
+          <span class="cmd__label" id="cmd-label">Run it</span>
+          <!-- the copy button is injected here by script: no dead control without JS -->
+        </div>
+        <!-- tabindex="0" is what makes the horizontal scroll reachable without a
+             mouse (WCAG 2.1.1, axe `scrollable-region-focusable`). The command is
+             wider than 360 px and `.cmd pre` scrolls rather than wraps, because a
+             wrapped shell command with `\` continuations reads as a different
+             command. `aria-labelledby` is what stops the focus stop being nameless. -->
+        <pre tabindex="0" aria-labelledby="cmd-label"><code id="install-cmd" data-fact="install-command">docker run -d --name helparr \
+  -p 3000:3000 \
+  -v helparr-data:/data \
+  -e HELPARR_ENCRYPTION_KEY="$(openssl rand -base64 32)" \
+  -e HELPARR_INITIAL_PASSWORD='replace-me' \
+  ghcr.io/feliperuzg/helparr:latest</code></pre>
+      </div>
+      <p class="cmd__note">
+        The package is public, so the pull needs no token and no
+        <code>docker login</code>. Then open
+        <code>http://your-host:3000</code> and sign in with the password you set.
+      </p>
+
+      <div class="actions">
+        <a class="btn btn-cta" href="#install">How to install it</a>
+        <a class="btn btn-primary" href="https://github.com/feliperuzg/helparr#readme">Read the README</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== What it is — FR6 ===================== -->
+  <section class="band" id="what">
+    <div class="container">
+      <div class="band__head">
+        <p class="eyebrow">What it is</p>
+        <h2>The tail your *arr stack leaves you in</h2>
+      </div>
+
+      <div class="grid grid--2">
+        <div>
+          <p>
+            Sonarr and Radarr automate acquisition well in the common case. The
+            tail is where it stops: a release the built-in indexer search won't
+            surface, a season with three episodes that never matched, a directory
+            imported before you changed the naming scheme.
+          </p>
+          <p>
+            Today those are resolved by hopping between four web UIs, a torrent
+            client, and occasionally the filesystem. helparr collapses that into
+            one screen.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Four things it does</h3>
+          <ul>
+            <li><strong>Arbitrary indexer search</strong> — query Prowlarr directly, across indexers, and grab a release to a target you pick.</li>
+            <li><strong>Library gaps</strong> — every monitored series and film with no file, in one list, with manual attach.</li>
+            <li><strong>Bulk rename</strong> — the full diff first, confirmed before a single write is issued.</li>
+            <li><strong>Unified queue &amp; health</strong> — what every instance is doing, and which ones are degraded.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Screens — FR4 ===================== -->
+  <section class="band band--sunken" id="screens">
+    <div class="container">
+      <div class="band__head">
+        <p class="eyebrow">Screens</p>
+        <h2>Four screens, nothing hidden</h2>
+      </div>
+
+      <article class="shot shot--lead">
+        <div class="shot__head">
+          <h3>Overview</h3>
+          <p>
+            Every instance's health and one queue across all of them. Sonarr calls
+            the stalled row healthy, because it handed the release to the client
+            and has nothing further to say about it; helparr disagrees from the
+            client's own evidence. Surfacing that disagreement is what this screen
+            is for.
+          </p>
+        </div>
+        <figure>
+          <img src="./screenshots/overview.png"
+               alt="The Overview screen: four connected instances and a unified queue, one row flagged as stalled"
+               width="1280" height="720" loading="eager" decoding="async">
+          <figcaption>Four connected instances, one unified queue, one row flagged as stalled.</figcaption>
+        </figure>
+      </article>
+
+      <div class="shot__grid">
+        <article class="shot">
+          <div class="shot__head">
+            <h3>Indexer Search</h3>
+            <p>
+              Free text across every indexer Prowlarr manages, with the filters the
+              *arr UIs omit, and a grab to a target you pick.
+            </p>
+          </div>
+          <figure>
+            <img src="./screenshots/search.png"
+                 alt="The Indexer Search screen: six results from two indexers, with size, seeders, leechers and age"
+                 width="1280" height="720" loading="lazy" decoding="async">
+            <figcaption>Size, seeders, leechers and age, from two indexers at once.</figcaption>
+          </figure>
+        </article>
+
+        <article class="shot">
+          <div class="shot__head">
+            <h3>Gaps</h3>
+            <p>
+              Everything monitored with no file, from both Sonarr and Radarr, in one
+              list. Attach a specific release to a specific episode, or a season
+              pack to a season.
+            </p>
+          </div>
+          <figure>
+            <img src="./screenshots/gaps.png"
+                 alt="The Gaps screen: missing episodes grouped by series, plus a missing film"
+                 width="1280" height="720" loading="lazy" decoding="async">
+            <figcaption>Missing episodes grouped by series, plus a missing film.</figcaption>
+          </figure>
+        </article>
+
+        <article class="shot">
+          <div class="shot__head">
+            <h3>Rename</h3>
+            <p>
+              The complete diff first. Nothing has moved at the moment this is on
+              screen, and the confirmation asks you to type the file count before
+              anything does.
+            </p>
+          </div>
+          <figure>
+            <img src="./screenshots/rename.png"
+                 alt="The Rename screen: five files with their current and proposed paths, each flagged as a folder move"
+                 width="1280" height="720" loading="lazy" decoding="async">
+            <figcaption>Current and proposed paths, each flagged as a folder move.</figcaption>
+          </figure>
+        </article>
+      </div>
+
+      <div class="provenance">
+        <p>
+          These are generated, not captured by hand:
+          <code>npm run build:screenshots</code> drives the real production build
+          in a browser against stub *arr servers. Every title, path and release
+          name above is invented, and the images go stale loudly rather than
+          silently.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Install — FR5, FR8 ===================== -->
+  <section class="band" id="install">
+    <div class="container">
+      <div class="band__head">
+        <p class="eyebrow">Install</p>
+        <h2>One container, two required values</h2>
+        <p>
+          The image is multi-architecture and served from one tag, so the same
+          line works on an Intel NAS and on Apple silicon — you never pick an
+          architecture.
+        </p>
+      </div>
+
+      <div class="grid grid--2">
+        <div>
+          <h3>What you need</h3>
+          <ul>
+            <li>A Docker host — no Node, no compiler, no Python: the image already carries the compiled modules for its architecture.</li>
+            <li>A running Sonarr, Radarr and/or Prowlarr to point it at, plus its API key.</li>
+            <li>An encryption key and an initial operator password. Compose refuses to start without them rather than falling back to a default.</li>
+            <li>A persistent volume for <code>/data</code>. The database and its WAL sidecars must stay on one mount.</li>
+          </ul>
+          <p>
+            Running on bare metal instead needs <strong data-fact="node-floor">Node.js 20.9+</strong>
+            and a build toolchain, because the native modules compile on install.
+            The README covers the systemd unit and the reverse-proxy setup.
+          </p>
+        </div>
+
+        <div>
+          <h3>Facts you can check</h3>
+          <dl class="facts">
+            <div class="fact">
+              <dt>Image</dt>
+              <dd data-fact="image-ref">ghcr.io/feliperuzg/helparr</dd>
+            </div>
+            <div class="fact">
+              <dt>Latest release</dt>
+              <dd data-fact="version">v0.1.0</dd>
+            </div>
+            <div class="fact">
+              <dt>Architectures</dt>
+              <dd data-fact="architectures">linux/amd64 · linux/arm64</dd>
+            </div>
+            <div class="fact">
+              <dt>Licence</dt>
+              <dd data-fact="licence">MIT</dd>
+            </div>
+          </dl>
+          <p class="cmd__note">
+            Every value above is compared against the repository by an automated
+            check. If they disagree, the check fails and names the claim.
+          </p>
+        </div>
+      </div>
+
+      <div class="actions">
+        <a class="btn btn-cta" href="https://github.com/feliperuzg/helparr#docker">Full install guide</a>
+        <a class="btn btn-primary" href="https://github.com/feliperuzg/helparr/releases">Releases &amp; changelog</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Limits — FR10, FR12 ===================== -->
+  <section class="band band--sunken" id="limits">
+    <div class="container">
+      <div class="band__head">
+        <p class="eyebrow">Limits</p>
+        <h2>What it deliberately does not do</h2>
+      </div>
+
+      <!-- FR10: the same candour as the README, not a softened marketing version. -->
+      <div class="warn">
+        <p class="warn__title">It issues real writes</p>
+        <p>
+          A grab is a grab, an attach asks Sonarr to import, and a rename moves
+          files on disk through the *arr APIs. None of it is reversible by
+          helparr, and the *arr APIs offer no rollback either. Every destructive
+          path sits behind a preview you have to confirm, and that preview is the
+          entire safety net — so read the diff.
+        </p>
+      </div>
+
+      <ul class="limits">
+        <li><strong>No multi-tenancy, no public exposure.</strong> One operator, one trusted network. There is no user model, no roles, no sharing.</li>
+        <li><strong>It does not replace Sonarr or Radarr.</strong> No scheduling, no quality profiles, no import logic, no library database of its own.</li>
+        <li><strong>It never touches the filesystem.</strong> Every write goes through the *arr APIs.</li>
+        <li><strong>It ships no indexers and no content.</strong> Prowlarr keeps that job.</li>
+        <li><strong>It terminates no TLS.</strong> Put it behind the reverse proxy you already run.</li>
+        <li><strong>There is no hosted instance and no demo.</strong> The only way to see it running is to run it.</li>
+      </ul>
+
+      <p class="closing-note">
+        Built for self-hosters and homelab operators who already run a fully
+        configured stack and are comfortable with API keys, indexer semantics and
+        release-group naming. If that is not you, this is the wrong tool.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ===================== Footer — FR7, FR11 ===================== -->
+<footer class="site-footer">
+  <div class="container">
+    <nav aria-label="Project links">
+      <a href="https://github.com/feliperuzg/helparr">Repository</a>
+      <a href="https://github.com/feliperuzg/helparr#readme">README</a>
+      <a href="https://github.com/feliperuzg/helparr/releases">Releases</a>
+      <a href="https://github.com/feliperuzg/helparr/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/feliperuzg/helparr/blob/main/LICENSE">Licence</a>
+    </nav>
+    <p>
+      The README is the authority for anything summarised here. helparr is
+      <span data-fact="licence">MIT</span>-licensed, &copy; 2026 Felipe Ruz.
+    </p>
+    <p>
+      This page collects nothing, sets no cookie, and loads nothing from a third
+      party.
+    </p>
+  </div>
+</footer>
+
+<script>
+  // Progressive enhancement only: the command is selectable without this, and
+  // the button does not exist at all when scripting is off (NFR2).
+  (function () {
+    var code = document.getElementById('install-cmd');
+    var bar  = document.querySelector('.cmd__bar');
+    if (!code || !bar || !navigator.clipboard) return;
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy the install command');
+    bar.appendChild(btn);
+
+    var live = document.createElement('span');
+    live.className = 'visually-hidden';
+    live.setAttribute('role', 'status');
+    bar.appendChild(live);
+
+    btn.addEventListener('click', function () {
+      navigator.clipboard.writeText(code.textContent).then(function () {
+        btn.textContent = 'Copied';
+        btn.dataset.copied = 'true';
+        live.textContent = 'Install command copied to the clipboard';
+        setTimeout(function () {
+          btn.textContent = 'Copy';
+          delete btn.dataset.copied;
+          live.textContent = '';
+        }, 2000);
+      }, function () {
+        live.textContent = 'Copy failed — select the command manually';
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,89 @@
+# Publishes the landing site to GitHub Pages.
+#
+# Separate from ci.yml on purpose (NFR4 / REQ-SITE-009). A deploy can fail for
+# reasons that have nothing to do with the pull request in front of it — Pages
+# being down, a token expiring, a concurrent deployment — and a required check
+# that fails for reasons outside the repository trains everyone to merge past
+# red. So this workflow is deliberately NOT in the required-checks list, and
+# nothing here gates a merge.
+#
+# That is affordable only because the site's *correctness* is checked
+# elsewhere: site-facts, site-links and site-weight run in ci.yml's `verify`
+# lane and site-a11y and site-viewport run in its `browser` lane. A pull
+# request that breaks the site still goes red. What this workflow owns is the
+# publish, and only the publish (ADR-9).
+#
+# It also does not run on pull requests. Pages has one live deployment per
+# repository, so a PR build would either do nothing or overwrite production.
+
+name: pages
+
+on:
+  push:
+    branches:
+      - main
+    # Only when something the published site is actually made of changed.
+    # Without this filter every commit to main redeploys an identical tree.
+    paths:
+      - 'site/**'
+      - 'docs/screenshots/**'
+      - 'public/logo.svg'
+      - 'scripts/build-site.mjs'
+      - '.github/workflows/pages.yml'
+  # The path filter cannot know about a deploy that failed for an unrelated
+  # reason, and re-running a publish must not need an empty commit.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One live site, so one deploy at a time. Not cancel-in-progress: a deployment
+# interrupted halfway is a worse outcome than a redundant one, and the queue
+# here is at most a couple of runs deep.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: assemble and deploy
+    runs-on: ubuntu-24.04
+
+    # Scoped to this job rather than the workflow: `id-token: write` is what
+    # lets deploy-pages prove to Pages that the artifact came from here, and it
+    # has no business being granted to anything that does not need it.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      # No `npm ci`. The assembler is a directory copy on the Node standard
+      # library — it imports nothing from node_modules, which is what keeps this
+      # job under a minute and independent of the dependency tree's health.
+      - name: Assemble the site
+        run: npm run site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload the assembled site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

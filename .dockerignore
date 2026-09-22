@@ -50,4 +50,11 @@ scripts
 # The README's screenshots. Read on GitHub, never by the server.
 docs
 
+# The landing site and its assembled output. Published to GitHub Pages by its
+# own workflow; the application never serves it (NFR5 / REQ-SITE-010). Shipping
+# it would put a second, unauthenticated surface inside a container whose threat
+# model is one operator on a trusted network.
+site
+.site
+
 tsconfig.tsbuildinfo

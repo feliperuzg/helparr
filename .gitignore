@@ -4,6 +4,10 @@ node_modules/
 next-env.d.ts
 tsconfig.tsbuildinfo
 
+# The assembled landing site. `site/` is the source and is committed; this is
+# what `npm run site` copies it into, alongside the screenshots and the mark.
+.site/
+
 # The operator's database and its WAL sidecars. Encrypted at rest, and still
 # never something to commit.
 *.db

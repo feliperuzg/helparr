@@ -213,6 +213,15 @@ function checkImageContents() {
   const dirs = inImage("for d in src test arx scripts .git; do [ -e /app/$d ] && echo $d; done; true");
   assert(dirs === '', 'contains no src/, test/, arx/ or scripts/ directory', dirs.replace(/\n/g, ', '));
 
+  // REQ-SITE-010. The landing site is published to GitHub Pages by its own
+  // workflow and the application never serves it. Both `site` and the `.site`
+  // it assembles into are in .dockerignore; this is where that exclusion is
+  // proven rather than assumed, because a copy that leaked in would be a
+  // second, unauthenticated surface inside a container whose entire threat
+  // model is one operator on a trusted network.
+  const landing = inImage("for d in site .site; do [ -e /app/$d ] && echo $d; done; true");
+  assert(landing === '', 'carries no landing-site directory', landing.replace(/\n/g, ', '));
+
   // AC3, second half: one dependency tree, not two. `next build`'s trace IS the
   // minimal node_modules, so a second top-level tree means an `npm ci` leaked
   // into the runner stage.

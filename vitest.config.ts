@@ -23,8 +23,16 @@ export default defineConfig({
       ...configDefaults.exclude,
       ...(process.env.HELPARR_BUNDLE_TEST ? [] : ['**/bundle-leak.test.ts']),
       // Same reasoning for the axe scan, which additionally needs a downloaded
-      // Chromium and boots the standalone server on a real port.
-      ...(process.env.HELPARR_A11Y_TEST ? [] : ['**/a11y.test.ts']),
+      // Chromium and boots the standalone server on a real port. The two
+      // landing-site specs join it: they serve `.site/` on loopback and drive
+      // the same Chromium, so they belong to the browser lane even though they
+      // never touch the application. Naming them one by one is deliberate —
+      // `**/a11y.test.ts` does not match `site-a11y.test.ts`, because `**/`
+      // only matches at a path-segment boundary, and a file that silently
+      // stayed in the fast lane would go red in CI for want of a browser.
+      ...(process.env.HELPARR_A11Y_TEST
+        ? []
+        : ['**/a11y.test.ts', '**/site-a11y.test.ts', '**/site-viewport.test.ts']),
       // And for the browser lane: the removal walkthrough, which drives the
       // real DELETE route against a real upstream, the perf guards, which
       // measure real frames against a real 500-row queue and a real 300-release
