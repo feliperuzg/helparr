@@ -151,9 +151,16 @@
           </p>
         </div>
         <figure>
-          <img src="./screenshots/overview.png"
-               alt="The Overview screen: four connected instances and a unified queue, one row flagged as stalled"
-               width="1280" height="720" loading="eager" decoding="async">
+          <!-- The link is the feature, not the fallback: the grid renders these
+               far below the 1280×720 they were captured at, and with scripting
+               off this anchor is the whole of FR15. The trailing script layers a
+               <dialog> over it; `aria-label` names the destination, because the
+               image's own alt text describes the screen, not the action. -->
+          <a class="shot__zoom" href="./screenshots/overview.png" aria-label="Open the Overview screenshot at full size">
+            <img src="./screenshots/overview.png"
+                 alt="The Overview screen: four connected instances and a unified queue, one row flagged as stalled"
+                 width="1280" height="720" loading="eager" decoding="async">
+          </a>
           <figcaption>Four connected instances, one unified queue, one row flagged as stalled.</figcaption>
         </figure>
       </article>
@@ -168,9 +175,11 @@
             </p>
           </div>
           <figure>
-            <img src="./screenshots/search.png"
-                 alt="The Indexer Search screen: six results from two indexers, with size, seeders, leechers and age"
-                 width="1280" height="720" loading="lazy" decoding="async">
+            <a class="shot__zoom" href="./screenshots/search.png" aria-label="Open the Indexer Search screenshot at full size">
+              <img src="./screenshots/search.png"
+                   alt="The Indexer Search screen: six results from two indexers, with size, seeders, leechers and age"
+                   width="1280" height="720" loading="lazy" decoding="async">
+            </a>
             <figcaption>Size, seeders, leechers and age, from two indexers at once.</figcaption>
           </figure>
         </article>
@@ -185,9 +194,11 @@
             </p>
           </div>
           <figure>
-            <img src="./screenshots/gaps.png"
-                 alt="The Gaps screen: missing episodes grouped by series, plus a missing film"
-                 width="1280" height="720" loading="lazy" decoding="async">
+            <a class="shot__zoom" href="./screenshots/gaps.png" aria-label="Open the Gaps screenshot at full size">
+              <img src="./screenshots/gaps.png"
+                   alt="The Gaps screen: missing episodes grouped by series, plus a missing film"
+                   width="1280" height="720" loading="lazy" decoding="async">
+            </a>
             <figcaption>Missing episodes grouped by series, plus a missing film.</figcaption>
           </figure>
         </article>
@@ -202,9 +213,11 @@
             </p>
           </div>
           <figure>
-            <img src="./screenshots/rename.png"
-                 alt="The Rename screen: five files with their current and proposed paths, each flagged as a folder move"
-                 width="1280" height="720" loading="lazy" decoding="async">
+            <a class="shot__zoom" href="./screenshots/rename.png" aria-label="Open the Rename screenshot at full size">
+              <img src="./screenshots/rename.png"
+                   alt="The Rename screen: five files with their current and proposed paths, each flagged as a folder move"
+                   width="1280" height="720" loading="lazy" decoding="async">
+            </a>
             <figcaption>Current and proposed paths, each flagged as a folder move.</figcaption>
           </figure>
         </article>
@@ -378,6 +391,64 @@
       }, function () {
         live.textContent = 'Copy failed — select the command manually';
       });
+    });
+  })();
+
+  // Same contract for the screenshots: the anchors navigate to the PNG on their
+  // own, and this only intercepts them. `showModal` is what buys the focus trap,
+  // the inert background and Escape without a line of code — a hand-rolled
+  // lightbox is exactly where those three get reimplemented wrong. Browsers
+  // without it keep the navigation.
+  (function () {
+    var links = document.querySelectorAll('.shot__zoom');
+    if (!links.length || !window.HTMLDialogElement || !HTMLDialogElement.prototype.showModal) return;
+
+    var dialog = document.createElement('dialog');
+    dialog.className = 'lightbox';
+    dialog.setAttribute('aria-label', 'Screenshot at full size');
+
+    var full = document.createElement('img');
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'lightbox__close';
+    close.textContent = 'Close';
+    close.autofocus = true;
+    dialog.appendChild(close);
+    dialog.appendChild(full);
+    document.body.appendChild(dialog);
+
+    var opener = null;
+    Array.prototype.forEach.call(links, function (link) {
+      link.addEventListener('click', function (event) {
+        // Anything but a plain left click is the visitor asking the browser for
+        // the file — a new tab, a download, a saved copy. Leave those alone.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+        event.preventDefault();
+        var img = link.querySelector('img');
+        full.src = link.href;
+        full.alt = img ? img.alt : '';
+        opener = link;
+        dialog.showModal();
+      });
+    });
+
+    close.addEventListener('click', function () { dialog.close(); });
+
+    // The backdrop is the dialog's own box outside its content, so a click that
+    // lands on the element itself rather than on a child is a backdrop click.
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) dialog.close();
+    });
+
+    // `showModal` already restores focus to whatever held it when the dialog
+    // opened, which covers the keyboard path. It does not cover a mouse click in
+    // a browser that does not focus a link on click — there focus was on the
+    // body, and that is where the modal would hand it back. Naming the opener
+    // makes the exit the same either way, for the button, the backdrop and
+    // Escape alike.
+    dialog.addEventListener('close', function () {
+      if (opener) opener.focus();
+      opener = null;
     });
   })();
 </script>

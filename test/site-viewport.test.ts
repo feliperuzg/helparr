@@ -109,6 +109,94 @@ describe('site viewport, scripting and origins', () => {
       // And the enhancement is genuinely absent rather than present-but-dead.
       // A Copy button that silently does nothing is worse than no button.
       expect(await page.locator('.copy-btn').count()).toBe(0);
+      expect(await page.locator('dialog').count()).toBe(0);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('opens each screenshot at full size without JavaScript', async () => {
+    // REQ-SITE-012's first scenario. With scripting off the anchor *is* the
+    // feature, so this asserts the navigation itself: that each link points at
+    // the same image the thumbnail shows, and that following one actually
+    // serves a PNG rather than a 404 the eye would read as "it opened".
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${site.origin}/`, { waitUntil: 'load' });
+
+      const pairs = await page.locator('.shot__zoom').evaluateAll((links) =>
+        links.map((link) => ({
+          href: (link as HTMLAnchorElement).getAttribute('href'),
+          src: link.querySelector('img')?.getAttribute('src') ?? null,
+          label: link.getAttribute('aria-label'),
+        })),
+      );
+
+      expect(pairs.length, 'not every screenshot is a link').toBe(4);
+      for (const { href, src, label } of pairs) {
+        expect(href).toBe(src);
+        expect(label, `${href} opens without saying what it opens`).toBeTruthy();
+      }
+
+      const response = await page.goto(`${site.origin}/screenshots/overview.png`);
+      expect(response?.status()).toBe(200);
+      expect(response?.headers()['content-type']).toContain('image/png');
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
+  it('enlarges a screenshot in a dialog the keyboard can reach and dismiss', async () => {
+    // REQ-SITE-012's other two scenarios. Tabbing to the link rather than
+    // calling `focus()` is what makes the ring assertion mean something —
+    // `:focus-visible` is exactly the selector that distinguishes the two.
+    //
+    // Two honest limits. A computed style cannot see that an outline was
+    // clipped away by `.shot figure`'s `overflow: hidden`, so what is asserted
+    // is the negative offset that keeps it inside the clip, not the pixels.
+    // And the focus that comes back after Escape is restored by `showModal`
+    // itself, so this passes with the page's own handler removed; it is here to
+    // catch a future lightbox that is not a <dialog>, not to prove that handler.
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${site.origin}/`, { waitUntil: 'networkidle' });
+
+      let tabs = 0;
+      while (tabs < 40 && !(await page.evaluate(() => !!document.activeElement?.classList.contains('shot__zoom')))) {
+        await page.keyboard.press('Tab');
+        tabs += 1;
+      }
+
+      const focused = await page.evaluate(() => {
+        const element = document.activeElement as HTMLAnchorElement | null;
+        if (!element) return null;
+        const style = getComputedStyle(element);
+        return {
+          zoom: element.classList.contains('shot__zoom'),
+          name: element.getAttribute('aria-label'),
+          ring: element.matches(':focus-visible') ? style.outlineWidth : '0px',
+          offset: element.matches(':focus-visible') ? style.outlineOffset : '0px',
+          href: element.href,
+        };
+      });
+
+      expect(focused?.zoom, 'no screenshot link is reachable by Tab').toBe(true);
+      expect(focused?.name).toMatch(/full size/);
+      expect(parseFloat(focused?.ring ?? '0'), 'the focused link shows no ring').toBeGreaterThanOrEqual(2);
+      expect(parseFloat(focused?.offset ?? '0'), 'the ring sits outside the clip').toBeLessThan(0);
+
+      await page.keyboard.press('Enter');
+      await page.waitForSelector('dialog[open]');
+      expect(await page.getAttribute('dialog[open] img', 'src')).toBe(focused?.href);
+
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('dialog[open]', { state: 'detached' });
+
+      // Focus back where it started, not at the top of the document — the
+      // difference between dismissing a dialog and losing your place.
+      expect(await page.evaluate(() => (document.activeElement as HTMLAnchorElement)?.href)).toBe(focused?.href);
     } finally {
       await context.close();
     }

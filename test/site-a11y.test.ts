@@ -99,6 +99,26 @@ describe('site accessibility', () => {
     }
   }, 60_000);
 
+  it('has no violations with the screenshot dialog open', async () => {
+    // The scans above see the page at rest, and at rest the lightbox is a
+    // closed <dialog> that axe skips as hidden. Its contents — a modal, an
+    // image and a Close button over a dimmed backdrop — are the part of the
+    // page most likely to fail contrast or name-role-value, and they only
+    // exist once something has been clicked.
+    const page = await open(1280, 900);
+    try {
+      await page.locator('.shot__zoom').first().click();
+      await page.waitForSelector('dialog[open]');
+
+      const { violations } = await new AxeBuilder({ page }).withTags(WCAG_AA).analyze();
+      expect(
+        violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`),
+      ).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  }, 60_000);
+
   it('states the install command in text a screen reader can reach', async () => {
     // NFR2's other half: the Copy button is an enhancement, so the command
     // itself must be readable and the button, when it exists, must say what it
