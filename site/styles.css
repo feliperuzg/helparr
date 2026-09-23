@@ -403,7 +403,16 @@ li { margin-bottom: var(--space-2); max-width: var(--measure); }
    `display: none`, and an unscoped `display` here would override it and leave
    the dialog on the page permanently. */
 .lightbox {
-  max-width: min(1280px, 94vw);
+  /* A definite width, deliberately not `fit-content`. Sizing the dialog from
+     the intrinsic width of the image inside it makes that image's inherited
+     `max-width: 100%` resolve against a width that depends on the image — a
+     cycle each engine is free to break its own way, and Safari breaks it
+     small, which is the bug this replaces. Nothing here consults the image.
+
+     The third term is what keeps a landscape image on a short window: all four
+     screenshots are 1280×720, so the width a given height affords is exactly
+     16/9 of it, and 56px is the Close bar above. */
+  width: min(1280px, 94vw, (92vh - 56px) * 16 / 9);
   padding: 0;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius);
@@ -411,12 +420,7 @@ li { margin-bottom: var(--space-2); max-width: var(--measure); }
   box-shadow: var(--shadow-xl);
 }
 .lightbox[open] { display: flex; flex-direction: column; }
-.lightbox img {
-  /* The full-size PNG is 720 px tall; on a short window it has to give way
-     before the close button does. */
-  max-height: calc(92vh - 52px);
-  width: auto;
-}
+.lightbox img { width: 100%; height: auto; }
 .lightbox__close {
   align-self: flex-end;
   font-family: var(--font-body); font-size: var(--text-xs); font-weight: 600;

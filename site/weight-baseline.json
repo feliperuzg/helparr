@@ -1,7 +1,7 @@
 {
   "note": "Transfer weight of the assembled site, in bytes: gzip -9 for text, raw for already-compressed formats. Measured by test/site-weight.test.ts, which fails when the site goes over. Update deliberately, in the same commit as whatever grew, and say why. The four screenshots are 284,010 B of the total — the page itself is under 14 kB.",
   "tolerance": 512,
-  "total": 330701,
+  "total": 330920,
   "files": {
     "fonts/jetbrains-mono-latin-var.woff2": 31340,
     "index.html": 6653,
@@ -10,6 +10,6 @@
     "screenshots/overview.png": 77544,
     "screenshots/rename.png": 83700,
     "screenshots/search.png": 67579,
-    "styles.css": 6709
+    "styles.css": 6928
   }
 }

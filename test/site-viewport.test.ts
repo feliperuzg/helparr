@@ -147,6 +147,42 @@ describe('site viewport, scripting and origins', () => {
     }
   }, 60_000);
 
+  it('renders the enlarged screenshot larger than the thumbnail that opened it', async () => {
+    // The assertion this spec was missing on the first attempt. "A dialog
+    // opened" is not the requirement — the requirement is that the UI inside
+    // the image becomes readable, and a modal that renders the PNG at its
+    // thumbnail size satisfies the first and fails the second. It shipped
+    // exactly that way, in Safari: the dialog was sized from the intrinsic
+    // width of the image inside it, so the image's inherited `max-width: 100%`
+    // resolved against a width that depended on the image, and Safari broke
+    // that cycle at a few hundred pixels.
+    //
+    // Be clear about what this does and does not cover. It runs in Chromium,
+    // which broke the same cycle the generous way, so it would not have caught
+    // that bug and will not catch the next engine-specific one. What keeps the
+    // size honest is the CSS not asking the question: the dialog's width is
+    // definite and consults nothing inside it. This guards the outcome in the
+    // one engine CI has.
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${site.origin}/`, { waitUntil: 'networkidle' });
+
+      // One of the three grid screenshots, not the lead: the lead is already
+      // near full width at rest, so it cannot show a difference this large.
+      const thumb = page.locator('.shot__grid .shot__zoom').first();
+      const before = (await thumb.boundingBox())!.width;
+      await thumb.click();
+      await page.waitForSelector('dialog[open]');
+      const after = (await page.locator('dialog[open] img').boundingBox())!.width;
+
+      expect(after, 'the enlarged screenshot is no wider than the thumbnail').toBeGreaterThan(before * 2);
+      expect(after, 'the enlarged screenshot is far from full size').toBeGreaterThan(1000);
+    } finally {
+      await context.close();
+    }
+  }, 60_000);
+
   it('enlarges a screenshot in a dialog the keyboard can reach and dismiss', async () => {
     // REQ-SITE-012's other two scenarios. Tabbing to the link rather than
     // calling `focus()` is what makes the ring assertion mean something —
