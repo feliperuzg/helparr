@@ -286,6 +286,19 @@ function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * qBittorrent reports `completion_on` in epoch seconds, and an unfinished
+ * torrent as `-1` — or as `4294967295`, the same value read as unsigned, on
+ * older builds. Neither is a time.
+ */
+const COMPLETION_UNSET = 4294967295;
+
+function completionOn(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (value <= 0 || value >= COMPLETION_UNSET) return null;
+  return value * 1000;
+}
+
 export function toTorrentState(input: unknown): TorrentState {
   const raw = (input ?? {}) as Record<string, unknown>;
   const state = typeof raw.state === 'string' ? raw.state : 'unknown';
@@ -298,6 +311,7 @@ export function toTorrentState(input: unknown): TorrentState {
     eta: num(raw.eta),
     state,
     fetchingMetadata: METADATA_STATES.has(state),
+    completionOn: completionOn(raw.completion_on),
   };
 }
 

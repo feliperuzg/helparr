@@ -1,6 +1,11 @@
 import type { IconName } from '@/components/Icon';
 import type { Tone } from '@/components/ui';
-import type { QueueRecord } from './types';
+import type {
+  QueueCause,
+  QueueCauseKind,
+  QueueRecord,
+  RemovalRequest,
+} from './types';
 
 /**
  * Presentation derivations for the queue screen.
@@ -21,35 +26,13 @@ export const QUEUE_STATES = [
 ] as const;
 export type QueueState = (typeof QUEUE_STATES)[number];
 
-export const STATE_LABEL: Record<QueueState, string> = {
-  downloading: 'Downloading',
-  importing: 'Importing',
-  queued: 'Queued',
-  paused: 'Paused',
-  stalled: 'Stalled',
-  failed: 'Failed',
-};
-
-export const STATE_TONE: Record<QueueState, Tone> = {
-  downloading: 'ok',
-  importing: 'ok',
-  queued: 'idle',
-  paused: 'idle',
-  stalled: 'warn',
-  failed: 'error',
-};
-
-export const STATE_ICON: Record<QueueState, IconName> = {
-  downloading: 'down',
-  importing: 'import',
-  queued: 'clock',
-  paused: 'pause',
-  stalled: 'pause',
-  failed: 'alert',
-};
-
 /**
- * The derived badge (REQ-QUEUE-004, -005).
+ * The derived transfer state (REQ-QUEUE-004, -005).
+ *
+ * No longer a badge: the row's verdict is its cause (below), and a second
+ * derived verdict beside it would be one more thing that could disagree. This
+ * survives for the toolbar's "N downloading" count, which is about transfer,
+ * not about what is wrong.
  *
  * The stall verdict is consulted **first**, and that ordering is the whole
  * point: a torrent stuck fetching metadata reports `trackedDownloadStatus: ok`,
@@ -74,11 +57,124 @@ export function deriveState(record: QueueRecord): QueueState {
   return 'queued';
 }
 
-/** True for the rows the "N need attention" badge counts. */
-export function needsAttention(record: QueueRecord): boolean {
-  const state = deriveState(record);
-  return state === 'stalled' || state === 'failed';
+/* ---------------------------------------------------------------------------
+   Cause (REQ-QUEUE-018..021, ADR-2). The classification itself is made on the
+   server by `classifyCause`; everything below is presentation only, and the
+   grid and the inspector both read it from here so the two badges for one row
+   can never disagree.
+   ------------------------------------------------------------------------- */
+
+/**
+ * Short on purpose: the label sits in a fixed-width grid column, in a
+ * monospaced face, beside an icon. The inspector's Cause group says the rest in
+ * full sentences.
+ */
+export const CAUSE_LABEL: Record<QueueCauseKind, string> = {
+  healthy: 'Healthy',
+  stalled: 'Stalled',
+  importing: 'Importing',
+  'import-not-performed': 'Not imported',
+  'import-rejected': 'Rejected',
+  'payload-missing': 'No payload',
+  unknown: 'Unknown',
+};
+
+/**
+ * `unknown` is `idle`, deliberately not `warn`: REQ-QUEUE-018 makes it an honest
+ * first-class outcome, and tinting "helparr does not know" like a fault would
+ * bias the operator toward reading it as one (components.md).
+ */
+export const CAUSE_TONE: Record<QueueCauseKind, Tone> = {
+  healthy: 'ok',
+  stalled: 'warn',
+  importing: 'ok',
+  'import-not-performed': 'warn',
+  'import-rejected': 'error',
+  'payload-missing': 'error',
+  unknown: 'idle',
+};
+
+/**
+ * The icon is the non-colour channel, so no two causes that share a tone share
+ * a glyph. `info` marks import-not-performed in the row itself because it is
+ * the one cause read from dwell time alone — the same glyph the inspector's
+ * inferred callout carries.
+ */
+export const CAUSE_ICON: Record<QueueCauseKind, IconName> = {
+  healthy: 'check',
+  stalled: 'alert',
+  importing: 'import',
+  'import-not-performed': 'info',
+  'import-rejected': 'x',
+  'payload-missing': 'gap',
+  unknown: 'search',
+};
+
+/**
+ * Sort order for the Cause column: the causes the operator can act on first,
+ * then the ones that need nothing. Ascending therefore reads "what needs me"
+ * from the top, which an alphabetical order of labels would not.
+ */
+const CAUSE_RANK: Record<QueueCauseKind, number> = {
+  'payload-missing': 0,
+  'import-rejected': 1,
+  'import-not-performed': 2,
+  stalled: 3,
+  unknown: 4,
+  importing: 5,
+  healthy: 6,
+};
+
+export function compareCause(a: QueueCause, b: QueueCause): number {
+  return CAUSE_RANK[a.kind] - CAUSE_RANK[b.kind];
 }
+
+/** True for the rows the "N need attention" badge counts. `unknown` is not one
+ *  of them — a filter for problems must not also catch "helparr doesn't know". */
+export function needsAttention(record: QueueRecord): boolean {
+  const kind = record.cause.kind;
+  return kind === 'stalled'
+    || kind === 'import-rejected'
+    || kind === 'import-not-performed'
+    || kind === 'payload-missing';
+}
+
+/** The only causes force import may ever be offered for (REQ-QUEUE-021, FR11). */
+const FORCE_IMPORT_CAUSES: ReadonlySet<QueueCauseKind> = new Set([
+  'import-not-performed',
+  'import-rejected',
+]);
+
+/**
+ * Both conditions, never one. The classifier already withholds the remedy where
+ * it cannot work (no downloadId, a non-*arr record), and the kind check is the
+ * second lock: a remedy list that somehow named force import for a
+ * payload-missing row still must not produce the control.
+ */
+export function canOfferForceImport(cause: QueueCause): boolean {
+  return FORCE_IMPORT_CAUSES.has(cause.kind) && cause.remedies.includes('force-import');
+}
+
+/** The force import screen builds its own plan from these two parameters. */
+export function forceImportHref(record: QueueRecord): string {
+  const params = new URLSearchParams({
+    instanceId: record.instanceId,
+    recordId: String(record.recordId),
+  });
+  return `/import?${params.toString()}`;
+}
+
+/**
+ * The flags the remove-and-blocklist remedy opens `RemovalPreview` with. The
+ * re-search is wanted — the point of blocklisting is that the *arr goes and
+ * finds a different release — so it is left unchecked. The operator still sees
+ * and can change every box before anything is sent (REQ-QUEUE-019).
+ */
+export const REMEDY_REMOVAL_FLAGS: RemovalRequest = {
+  removeFromClient: true,
+  blocklist: true,
+  skipRedownload: false,
+};
 
 /**
  * Why helparr disagrees with the *arr, in one line — shown next to the badge

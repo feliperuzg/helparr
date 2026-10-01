@@ -139,6 +139,46 @@ describe('grab semantics', () => {
     expect(sonarr.pushes).toHaveLength(0);
   });
 
+  it('returns the matched release and the item it would replace, for the explainer', async () => {
+    sonarr.setParse({
+      series: { id: 42, title: 'Show', qualityProfileId: 4 },
+      episodes: [{ id: 101, seasonNumber: 1, episodeNumber: 1, hasFile: true, episodeFileId: 55 }],
+      parsedEpisodeInfo: { quality: { quality: { name: 'WEBDL-1080p' } } },
+    });
+    sonarr.setCandidates([{
+      title: RELEASE.title,
+      infoHash: 'HASH-1',
+      customFormats: [{ id: 3, name: 'x265' }],
+      customFormatScore: 10,
+      rejections: ['Existing file meets cutoff: WEBDL-1080p'],
+    }]);
+    register();
+
+    const evaluated = await evaluateRelease(sonarrId, RELEASE.title, 'HASH-1');
+    expect(evaluated.ok).toBe(true);
+    if (!evaluated.ok) return;
+
+    // FR17: search reaches the same comparison as queue and gaps, so it needs
+    // the instance's own record of the release and the file it would replace.
+    expect(evaluated.value.candidate?.customFormatScore).toBe(10);
+    expect(evaluated.value.candidate?.customFormats).toEqual([{ id: 3, name: 'x265' }]);
+    expect(evaluated.value.target).toEqual({ episodeId: 101, fileId: 55, profileId: 4 });
+  });
+
+  it('offers no target when the instance reports no quality profile', async () => {
+    sonarr.setParse(parsedSeries());
+    sonarr.setCandidates([{ title: RELEASE.title, infoHash: 'HASH-1', rejections: [] }]);
+    register();
+
+    const evaluated = await evaluateRelease(sonarrId, RELEASE.title, 'HASH-1');
+    expect(evaluated.ok).toBe(true);
+    if (!evaluated.ok) return;
+
+    expect(evaluated.value.matched).toBe(true);
+    expect(evaluated.value.candidate).not.toBeNull();
+    expect(evaluated.value.target).toBeNull();
+  });
+
   it('reports "the instance never returned this release" as such', async () => {
     sonarr.setParse(parsedSeries());
     sonarr.setCandidates([{ title: 'Some.Other.Release', infoHash: 'OTHER', rejections: ['no'] }]);
@@ -150,7 +190,7 @@ describe('grab semantics', () => {
 
     // Not an invented verdict. "Sonarr's own search never returned this" is
     // itself the answer the operator came for.
-    expect(evaluated.value).toEqual({ matched: false, rejections: [] });
+    expect(evaluated.value).toEqual({ matched: false, rejections: [], candidate: null, target: null });
     expect(sonarr.pushes).toHaveLength(0);
   });
 

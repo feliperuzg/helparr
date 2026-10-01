@@ -3,12 +3,12 @@
 import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual';
 import { useCallback, useEffect, useRef } from 'react';
 
+import { CauseBadge } from '@/components/queue/CauseGroup';
 import { StatusBadge } from '@/components/ui';
 import {
-  STATE_ICON,
-  STATE_LABEL,
-  STATE_TONE,
-  deriveState,
+  CAUSE_LABEL,
+  CAUSE_TONE,
+  compareCause,
   etaOf,
   formatBytes,
   progressOf,
@@ -29,7 +29,7 @@ import type { QueueRecord } from '@/lib/types';
  *    which is why T24 asserts it.
  */
 
-export const SORT_COLUMNS = ['state', 'title', 'target', 'progress', 'size', 'eta'] as const;
+export const SORT_COLUMNS = ['cause', 'title', 'target', 'progress', 'size', 'eta'] as const;
 export type SortColumn = (typeof SORT_COLUMNS)[number];
 export interface Sort { column: SortColumn; direction: 'asc' | 'desc' }
 
@@ -45,7 +45,9 @@ interface Column {
 
 const COLUMNS: Column[] = [
   { key: 'select', label: 'Select', className: 'qgrid__cell--check', sortable: false },
-  { key: 'state', label: 'State', sortable: true },
+  // The cause replaces the bare derived state (T15): every state maps to exactly
+  // one cause, so the column is widened rather than a second one added.
+  { key: 'cause', label: 'Cause', sortable: true },
   { key: 'title', label: 'Release', sortable: true },
   { key: 'target', label: 'Target', className: 'qcol-target', sortable: true },
   { key: 'progress', label: 'Progress', className: 'qcol-progress', sortable: true },
@@ -223,9 +225,8 @@ function Row({
   onOpen,
 }: RowProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const state = deriveState(record);
   const progress = progressOf(record);
-  const tone = STATE_TONE[state];
+  const tone = CAUSE_TONE[record.cause.kind];
 
   // Move DOM focus with the cursor, but only when focus is already inside the
   // grid. Stealing it otherwise would drag the operator out of the search field
@@ -275,10 +276,12 @@ function Row({
           tabIndex={-1}
         />
       </span>
-      <span role="gridcell" className="qgrid__cell">
-        <StatusBadge tone={tone} icon={isPending ? 'clock' : STATE_ICON[state]}>
-          {isPending ? 'Removing…' : STATE_LABEL[state]}
-        </StatusBadge>
+      <span role="gridcell" className="qgrid__cell" title={CAUSE_LABEL[record.cause.kind]}>
+        {isPending ? (
+          <StatusBadge tone={tone} icon="clock">Removing…</StatusBadge>
+        ) : (
+          <CauseBadge cause={record.cause} />
+        )}
       </span>
       <span role="gridcell" className="qgrid__cell mono" title={record.title}>
         {record.title}
@@ -313,8 +316,8 @@ export function sortRecords(records: QueueRecord[], sort: Sort): QueueRecord[] {
 
 function compare(a: QueueRecord, b: QueueRecord, column: SortColumn): number {
   switch (column) {
-    case 'state':
-      return STATE_LABEL[deriveState(a)].localeCompare(STATE_LABEL[deriveState(b)]);
+    case 'cause':
+      return compareCause(a.cause, b.cause);
     case 'title':
       return a.title.localeCompare(b.title);
     case 'target':
@@ -339,5 +342,6 @@ export function filterRecords(records: QueueRecord[], query: string): QueueRecor
     r.title.toLowerCase().includes(needle)
     || r.targetLabel.toLowerCase().includes(needle)
     || r.instanceLabel.toLowerCase().includes(needle)
+    || CAUSE_LABEL[r.cause.kind].toLowerCase().includes(needle)
     || (r.indexer?.toLowerCase().includes(needle) ?? false));
 }

@@ -181,8 +181,13 @@ describe('operation log integrity', () => {
     // carries (NFR7). That row is appended in the same call as its parent and
     // is never updated either, so the invariant is unchanged — but an
     // unqualified count would read a second append-only table as a violation.
+    // Force import's `import_file_outcome` is the same shape for the same
+    // reason (stuck-item-triage). The targets are pinned by name, so a new
+    // table written from here still has to be added deliberately.
     expect(source.match(/\bINSERT\s+INTO\s+operation\b/gi)).toHaveLength(1);
-    expect(source.match(/\bINSERT\s+INTO\b/gi)).toHaveLength(2);
+    expect(
+      [...source.matchAll(/\bINSERT\s+INTO\s+(\w+)/gi)].map((match) => match[1]).sort(),
+    ).toEqual(['import_file_outcome', 'operation', 'rename_file_outcome']);
     expect(source.match(/\bDELETE\s+FROM\s+operation\b/gi)).toHaveLength(1);
 
     // Nothing outside this module touches the table either — a second writer

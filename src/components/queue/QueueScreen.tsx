@@ -17,7 +17,7 @@ import {
   ToastStack, useToasts,
 } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
-import { deriveState, needsAttention } from '@/lib/queue';
+import { REMEDY_REMOVAL_FLAGS, deriveState, needsAttention } from '@/lib/queue';
 import type { QueueRecord, RemovalRequest } from '@/lib/types';
 
 /**
@@ -38,6 +38,14 @@ const HINTS: Array<[string[], string]> = [
   [['?'], 'all shortcuts'],
 ];
 
+/** What the removal preview is open on, and — when it was opened from a cause's
+ *  remedy rather than the plain button — the flags it starts with. */
+interface PreviewTarget {
+  records: QueueRecord[];
+  initialFlags?: RemovalRequest;
+  presetReason?: string;
+}
+
 export interface QueueScreenProps {
   /** Resolved on the server from `HELPARR_QUEUE_REFRESH_SECONDS` (ADR-2). */
   refreshMs?: number;
@@ -48,9 +56,9 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
   const searchRef = useRef<HTMLInputElement>(null);
 
   const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<Sort>({ column: 'state', direction: 'asc' });
+  const [sort, setSort] = useState<Sort>({ column: 'cause', direction: 'asc' });
   const [openId, setOpenId] = useState<string | null>(null);
-  const [preview, setPreview] = useState<QueueRecord[] | null>(null);
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
   const [retrying, setRetrying] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -143,7 +151,7 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
   );
 
   function confirmRemoval(flags: RemovalRequest) {
-    const targets = preview ?? [];
+    const targets = preview?.records ?? [];
     if (targets.length === 0) return;
     const ids = new Set(targets.map((r) => r.id));
     setPending(ids);
@@ -217,7 +225,7 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
             value={query}
             onChange={onQueryChange}
             label="Filter the queue"
-            placeholder="Filter by release, target, instance or indexer"
+            placeholder="Filter by release, target, instance, indexer or cause"
             mono
           />
           <span className="toolbar__spacer" />
@@ -297,7 +305,7 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
           <button
             type="button"
             className="btn btn-danger btn-sm"
-            onClick={() => setPreview(selectedRecords)}
+            onClick={() => setPreview({ records: selectedRecords })}
             disabled={remove.isPending}
           >
             <Icon name="x" size={12} />Remove from queue
@@ -309,13 +317,20 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
         <QueueInspector
           record={openRecord}
           onClose={() => setOpenId(null)}
-          onRemove={() => setPreview([openRecord])}
+          onRemove={() => setPreview({ records: [openRecord] })}
+          onRemoveAndBlocklist={() => setPreview({
+            records: [openRecord],
+            initialFlags: REMEDY_REMOVAL_FLAGS,
+            presetReason: 'Flags are pre-set for the remove-and-blocklist remedy this cause names.',
+          })}
         />
       ) : null}
 
       {preview ? (
         <RemovalPreview
-          records={preview}
+          records={preview.records}
+          initialFlags={preview.initialFlags}
+          presetReason={preview.presetReason}
           busy={remove.isPending}
           onCancel={() => setPreview(null)}
           onConfirm={confirmRemoval}

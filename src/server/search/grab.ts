@@ -132,6 +132,9 @@ export const UNRESOLVED_TARGET: ParsedTarget = {
   fullSeason: false,
   isMultiSeason: false,
   episodeCount: 0,
+  qualityProfileId: null,
+  episodeId: null,
+  fileId: null,
 };
 
 /* ── Evaluate: the destination's own verdict, on request only (ADR-5) ─────── */
@@ -156,6 +159,8 @@ function matchCandidate(
   return candidates.find((c) => c.title === title) ?? null;
 }
 
+const UNMATCHED: EvaluatedRelease = { matched: false, rejections: [], candidate: null, target: null };
+
 export async function evaluateRelease(
   instanceId: string,
   title: string,
@@ -169,19 +174,31 @@ export async function evaluateRelease(
   if (!parsed.ok || (!parsed.value.seriesId && !parsed.value.movieId)) {
     // Nothing to search against. The instance cannot have an opinion about a
     // release it cannot place, which is exactly `matched: false`.
-    return { ok: true, value: { matched: false, rejections: [] } };
+    return { ok: true, value: UNMATCHED };
   }
 
   const candidates = await readThrough(dest.value.id, () => dest.value.client.evaluate(
     { seriesId: parsed.value.seriesId, movieId: parsed.value.movieId },
     signal,
   ));
-  if (!candidates.ok) return { ok: true, value: { matched: false, rejections: [] } };
+  if (!candidates.ok) return { ok: true, value: UNMATCHED };
 
   const match = matchCandidate(candidates.value, title, infoHash);
-  return match
-    ? { ok: true, value: { matched: true, rejections: match.rejections } }
-    : { ok: true, value: { matched: false, rejections: [] } };
+  if (!match) return { ok: true, value: UNMATCHED };
+
+  const { qualityProfileId, episodeId, movieId, fileId } = parsed.value;
+  // Without a profile there are no thresholds to compare against, so no
+  // target is offered rather than one with an invented profile.
+  const target = qualityProfileId !== null
+    ? {
+      ...(movieId !== null ? { movieId } : {}),
+      ...(episodeId !== null ? { episodeId } : {}),
+      fileId,
+      profileId: qualityProfileId,
+    }
+    : null;
+
+  return { ok: true, value: { matched: true, rejections: match.rejections, candidate: match, target } };
 }
 
 /* ── Grab: the write ─────────────────────────────────────────────────────── */

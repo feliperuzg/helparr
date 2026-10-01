@@ -1,3 +1,4 @@
+import type { DecisionCandidate } from './decisions';
 import type {
   AttachPreview,
   BulkSearchOutcome,
@@ -27,6 +28,9 @@ import type {
   SeasonAttachPreview,
   TestOutcome,
 } from './types';
+import type { DecisionComparison } from './decisions';
+import type { ImportMapping, ImportPlan } from './importPlan';
+import type { UnmappedRead } from './unmapped';
 
 /**
  * Browser-side API client.
@@ -39,12 +43,20 @@ import type {
 export class ApiError extends Error {
   readonly status: number;
   readonly reason?: string;
+  /**
+   * The parsed error body, whole. Most callers only need `reason` (a short
+   * code string); a caller that needs a typed payload the body carries beyond
+   * that — force import's `refusal` object, for one — reads it from here
+   * rather than this class growing a second strongly-typed field per route.
+   */
+  readonly detail?: unknown;
 
-  constructor(status: number, message: string, reason?: string) {
+  constructor(status: number, message: string, reason?: string, detail?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.reason = reason;
+    this.detail = detail;
   }
 }
 
@@ -76,7 +88,7 @@ async function request<T>(path: string, init?: RequestInit, bounceOn401 = true):
     const message = (payload && typeof payload.error === 'string')
       ? payload.error
       : `Request failed (${response.status}).`;
-    throw new ApiError(response.status, message, payload?.reason);
+    throw new ApiError(response.status, message, payload?.reason, payload);
   }
 
   return payload as T;
@@ -122,6 +134,94 @@ export interface SavedSearchInput {
   categories: number[];
   minSeeders: number;
 }
+
+/* ── Force import (T11, T14) ───────────────────────────────────────────── */
+
+/** `ImportPlan` plus `startImport`'s own in-flight marker — every `GET`/`PATCH` on a plan returns this, never the bare plan. */
+export interface ImportPlanRead extends ImportPlan {
+  importing: boolean;
+  /** Whether helparr will send this instance kind's import at all (ADR-6) — Radarr stays read-only until T0's capture confirms its payload. */
+  writeEnabled: boolean;
+}
+
+/** One `/manualimport`-resolved episode, as the series picker renders it. */
+export interface ImportEpisodeChoice {
+  id: number;
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string | null;
+  hasFile: boolean;
+  episodeFileId: number | null;
+}
+
+/* ── Decision explainer (T9, T14) ──────────────────────────────────────── */
+
+// The candidate and target shapes live in `decisions.ts` so `types.ts` can
+// carry them on `EvaluatedRelease` without importing this module.
+export type {
+  DecisionCandidate,
+  DecisionCustomFormatRef,
+  DecisionQualityModel,
+  DecisionTarget,
+} from './decisions';
+
+export interface ExplainInput {
+  instanceId: string;
+  episodeId?: number;
+  movieId?: number;
+  /** `null` means the target has no file at all — never read, never 404'd. */
+  fileId: number | null;
+  profileId: number;
+  candidate: DecisionCandidate;
+}
+
+/** Mirrors `DecisionsFailureKind` (`configCache.ts`) plus the explainer's own two cases. */
+export type DecisionsFailureKind =
+  | 'unreachable'
+  | 'unauthorized'
+  | 'upstream-error'
+  | 'timeout'
+  | 'no-instance'
+  | 'not-decisions-client';
+
+export interface DecisionsFailure {
+  kind: DecisionsFailureKind;
+  reason: string;
+}
+
+export type ExplainFailureKind = DecisionsFailureKind | 'config-unavailable' | 'existing-file-unavailable';
+
+/** A degraded explanation still carries the candidate's verbatim rejections (REQ-DEC-008). */
+export interface ExplainFailure {
+  kind: ExplainFailureKind;
+  reason: string;
+  rejections: string[];
+}
+
+// Always 200 (REQ-DEC-008) — failure is `{ ok: false }`, never a throw.
+export type ExplainResult =
+  | { ok: true; value: DecisionComparison }
+  | { ok: false; error: ExplainFailure };
+
+export type EvaluateReleasesResult =
+  | { ok: true; value: DecisionCandidate[] }
+  | { ok: false; error: DecisionsFailure };
+
+/** One rejected import candidate of a queue record, explained (FR17, T19). */
+export interface ImportCandidateExplanation {
+  path: string;
+  /** The file name the instance scored, as it reported it. */
+  name: string;
+  result: ExplainResult;
+}
+
+export type ExplainImportCandidatesResult =
+  | { ok: true; value: ImportCandidateExplanation[] }
+  | { ok: false; error: DecisionsFailure };
+
+export type RefreshDecisionsConfigResult =
+  | { ok: true; value: { fetchedAt: string } }
+  | { ok: false; error: DecisionsFailure };
 
 export const api = {
   listInstances: () =>
@@ -358,4 +458,96 @@ export const api = {
     request<void>('/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) }, false),
 
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }, false),
+
+  /* ── Force import (ADR-3, ADR-4, ADR-8; T11, T14) ──────────────────────── */
+
+  // `manualimport` is one synchronous read, so this returns the finished plan
+  // directly (ADR-3) — unlike `createRenamePlan`, there is no bare id to poll.
+  createImportPlan: (body: { instanceId: string; recordId: number }) =>
+    request<ImportPlanRead>('/api/import/plan', { method: 'POST', body: JSON.stringify(body) }),
+
+  importPlan: (id: string, signal?: AbortSignal) =>
+    request<ImportPlanRead>(`/api/import/plan/${encodeURIComponent(id)}`, { signal }),
+
+  // One row edit — include/exclude or a mapping override (ADR-4, FR7).
+  editImportRow: (
+    id: string,
+    body: { ordinal: number; included?: boolean; mapping?: ImportMapping },
+  ) =>
+    request<ImportPlanRead>(`/api/import/plan/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  // The series episode picker's source, read on demand when the picker opens —
+  // never pre-fetched for every row (NFR2).
+  importEpisodeChoices: (id: string, signal?: AbortSignal) =>
+    request<{ episodes: ImportEpisodeChoice[] }>(
+      `/api/import/plan/${encodeURIComponent(id)}/episodes`,
+      { signal },
+    ).then((r) => r.episodes),
+
+  /**
+   * The only call that can import a file (ADR-5, ADR-6, ADR-7). Same
+   * discipline as `applyRenamePlan`: `typedCount` is the entire body, and
+   * there is no `signal` — a command that may already be running on the
+   * instance must not be abandoned mid-flight by a navigation away.
+   *
+   * A 409 refusal arrives as `ApiError` with the whole `ImportRefusal` object
+   * on `.detail.refusal`, not just `.reason` — the caller needs `changes`, not
+   * only `kind`, to say what drifted.
+   */
+  applyImportPlan: (id: string, typedCount: number) =>
+    request<{ planId: string; rowCount: number }>(
+      `/api/import/plan/${encodeURIComponent(id)}/apply`,
+      { method: 'POST', body: JSON.stringify({ typedCount }) },
+    ),
+
+  /* ── Decision explainer (ADR-10, ADR-11, ADR-12, ADR-13; T9, T14) ──────── */
+
+  // Never called on render — reached only when the explainer is opened on one
+  // candidate (NFR2). Always 200: a degraded read still carries the
+  // candidate's verbatim rejections in `error.rejections` (REQ-DEC-008).
+  explainDecision: (body: ExplainInput, signal?: AbortSignal) =>
+    request<ExplainResult>('/api/decisions/explain', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // Gaps' "Evaluate releases" (ADR-13). Spends the instance's own indexer
+  // quota, so this is reached only from the button whose label says so —
+  // never on open, never on a refetch.
+  evaluateReleases: (
+    body: { instanceId: string; episodeId?: number; movieId?: number },
+    signal?: AbortSignal,
+  ) =>
+    request<EvaluateReleasesResult>('/api/decisions/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // The queue's `import-rejected` cause, file by file (FR17) — on request only.
+  explainImportCandidates: (body: { instanceId: string; downloadId: string }, signal?: AbortSignal) =>
+    request<ExplainImportCandidatesResult>('/api/decisions/import-candidates', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  // The explainer's "Refresh" control (ADR-11) — bypasses the 10-minute config
+  // cache TTL for one instance.
+  refreshDecisionsConfig: (instanceId: string) =>
+    request<RefreshDecisionsConfigResult>('/api/decisions/config', {
+      method: 'POST',
+      body: JSON.stringify({ instanceId }),
+    }),
+
+  /* ── Unmapped folders (ADR-9, REQ-GAPS-022..026; T13, T14) ─────────────── */
+
+  // Uncached upstream, so `refresh` only exists for parity with the other
+  // reads (`gaps`) — the button lets the operator ask again without a reload.
+  unmapped: (options: { refresh?: boolean } = {}, signal?: AbortSignal) =>
+    request<UnmappedRead>(`/api/unmapped${options.refresh ? '?refresh=1' : ''}`, { signal }),
 };

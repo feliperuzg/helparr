@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { RenamePlanRow, RenameRefusal, RenameScopeEntry } from '@/lib/types';
 import { isRenameClient, type RenameClient } from '@/server/clients/types';
+import { awaitCommand } from '@/server/commands/await';
 import { clientFor } from '@/server/instances/registry';
 import { logger } from '@/server/logging/redact';
 import { recordRenameOperation, type RenameFileOutcomeInput } from '@/server/operations/log';
@@ -33,10 +34,6 @@ import {
  * apply of the un-drifted rows: a preview the operator read that no longer
  * describes the library is not partly valid.
  */
-
-/** How long the batch command is waited on before outcomes are verified. */
-const COMMAND_DEADLINE_MS = 10 * 60 * 1000;
-const COMMAND_POLL_MS = 1_000;
 
 export type ApplyStart =
   | { ok: true; rowCount: number }
@@ -231,42 +228,6 @@ function fail(
   reason: string,
 ): void {
   for (const row of rows) outcomes.set(row.id, { outcome: 'failed', detail: reason });
-}
-
-interface CommandResult {
-  /** Non-null when the command itself never completed. */
-  failure: string | null;
-  /**
-   * The instance's own note about the completed command.
-   *
-   * Worth carrying even on success, because it is the only place the upstream
-   * admits to doing nothing: a Sonarr that renamed zero files still reports
-   * `completed` / `successful`, and says so only here — measured verbatim as
-   * `0 selected episode files renamed for <title>` on 2026-09-17.
-   */
-  message: string | null;
-}
-
-async function awaitCommand(client: RenameClient, commandId: number): Promise<CommandResult> {
-  const deadline = Date.now() + COMMAND_DEADLINE_MS;
-  while (Date.now() < deadline) {
-    const status = await client.commandStatus(commandId);
-    if (!status.ok) return { failure: status.error.reason, message: null };
-    if (status.value.state === 'completed') {
-      return { failure: null, message: status.value.message };
-    }
-    if (status.value.state === 'failed') {
-      return {
-        failure: status.value.message ?? 'The instance reported the rename command failed.',
-        message: status.value.message,
-      };
-    }
-    await new Promise((done) => setTimeout(done, COMMAND_POLL_MS));
-  }
-  return {
-    failure: 'The rename command did not finish in time. Check the instance before retrying.',
-    message: null,
-  };
 }
 
 /**

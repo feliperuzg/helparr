@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 
+import EvaluateReleases from '@/components/gaps/EvaluateReleases';
 import { formatAirDate } from '@/components/gaps/GapsGrid';
 import { useGapHistory } from '@/components/gaps/useGaps';
 import Icon from '@/components/Icon';
@@ -23,6 +24,10 @@ import type { Gap, HistoryEvent, InferredReason } from '@/lib/types';
  *    request for the item on screen. A grid of four hundred rows that each
  *    fetched their own history would be four hundred requests for a panel the
  *    operator opens three times.
+ *
+ * The same rule, at a higher price, governs "Evaluate releases" (ADR-13; T20):
+ * it runs the instance's own interactive search, which spends indexer quota,
+ * so it is a button with the warning beside it — never a read on open.
  */
 
 export interface GapInspectorProps {
@@ -127,6 +132,10 @@ export default function GapInspector({ gap, onClose, onAttach, onSearch }: GapIn
           </ul>
         )}
       </InspectorGroup>
+
+      {/* Keyed on the gap: j/k to the next row must not leave this item's
+          releases — or an in-flight search's result — under the next title. */}
+      <EvaluateReleases key={gap.id} gap={gap} />
     </Inspector>
   );
 }

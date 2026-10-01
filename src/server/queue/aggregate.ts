@@ -131,6 +131,8 @@ function attribute(target: Target, read: ArrQueueRead): QueueRecord[] {
     instanceKind: target.kind,
     torrent: null,
     stall: { stalled: false, evidence: '' },
+    // Replaced by enrichRecords below, which classifies every record (ADR-2).
+    cause: { kind: 'unknown', provenance: 'inferred', evidence: [], remedies: [] },
   }));
 }
 

@@ -17,16 +17,27 @@ import { BaseArrClient } from './base';
 import { classifyResponse, readJson, requestWithRetry } from './http';
 import {
   describeNetworkError,
+  type ArrCommandStatus,
+  type ArrCustomFormatRef,
+  type ArrEpisodeRef,
+  type ArrExistingFile,
   type ArrGapRead,
   type ArrGapRecord,
-  type ArrCommandStatus,
+  type ArrHistoryEvent,
+  type ArrImportCandidate,
+  type ArrQualityModel,
+  type ArrQualityProfileDetail,
   type ArrQueueClient,
   type ArrQueueRead,
   type ArrQueueRecord,
   type ArrRenameRow,
   type ArrRenameTitle,
+  type ArrRootFolder,
   type ClientResult,
+  type DecisionsClient,
   type GapClient,
+  type ImportClient,
+  type ManualImportFile,
   type PushOutcome,
   type QualityProfileSummary,
   type ReleaseCandidate,
@@ -34,6 +45,7 @@ import {
   type ReleaseDescriptor,
   type RenameClient,
   type RenameCommandRequest,
+  type RootFolderClient,
   type SearchCommandRequest,
 } from './types';
 
@@ -89,8 +101,23 @@ const GAPS_DEADLINE_MS = 30_000;
  */
 const HISTORY_PAGE_SIZE = 20;
 
+/**
+ * A download's whole history in one page. The read-back matches one
+ * `downloadFolderImported` event per file, and a season pack holds well over
+ * 20 files plus their grab and rejection events — a short page would turn
+ * real imports into `unverified` (ADR-7).
+ */
+const DOWNLOAD_HISTORY_PAGE_SIZE = 1000;
+
 export class ArrClient extends BaseArrClient
-  implements ArrQueueClient, ReleaseClient, GapClient, RenameClient {
+  implements
+    ArrQueueClient,
+    ReleaseClient,
+    GapClient,
+    RenameClient,
+    ImportClient,
+    DecisionsClient,
+    RootFolderClient {
   /**
    * One shared deadline for the whole paginated read, combined with the
    * caller's. Per-page timeouts alone would let a queue with twelve pages take
@@ -388,6 +415,324 @@ export class ArrClient extends BaseArrClient
     const accepted = raw?.rejected !== true;
 
     return { ok: true, value: { accepted, rejections } };
+  }
+
+  /* ── Force import (stuck-item-triage, T2) ─────────────────────────────── */
+
+  /**
+   * The candidate set for one stuck download (OQ-5). `filterExistingFiles:
+   * false` is deliberate — the default drops candidates that already have a
+   * file at the target, which is exactly the row ADR-8's replacement flag
+   * needs to see.
+   */
+  async manualImportCandidates(
+    downloadId: string,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrImportCandidate[]>> {
+    const context = `${this.kind} manual import candidates`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url('/manualimport', { downloadId, filterExistingFiles: false }),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a candidate array.` },
+      };
+    }
+
+    return { ok: true, value: body.value.map((raw) => toImportCandidate(raw, this.kind)) };
+  }
+
+  /**
+   * `ManualImport` (ADR-6). `importMode` is always explicit — never left to
+   * the instance's own default — and each file is projected onto the pair the
+   * instance expects: `seriesId`+`episodeIds` on Sonarr, `movieId` on Radarr.
+   * The other kind's keys are stripped rather than sent as `undefined`, since
+   * an explicit `undefined` still serialises through some JSON replacers.
+   */
+  async manualImport(
+    files: ManualImportFile[],
+    signal?: AbortSignal,
+  ): Promise<ClientResult<{ commandId: number }>> {
+    const projected = files.map((file) => {
+      const base = {
+        path: file.path,
+        quality: file.quality,
+        languages: file.languages,
+        releaseGroup: file.releaseGroup,
+        indexerFlags: file.indexerFlags,
+        releaseType: file.releaseType ?? null,
+        downloadId: file.downloadId,
+      };
+      return this.kind === 'sonarr'
+        ? { ...base, seriesId: file.seriesId, episodeIds: file.episodeIds }
+        : { ...base, movieId: file.movieId };
+    });
+
+    const result = await this.postCommand(
+      { name: 'ManualImport', importMode: 'auto', files: projected },
+      `${this.kind} manual import command`,
+      signal,
+    );
+    if (!result.ok) return result;
+    return { ok: true, value: { commandId: result.value } };
+  }
+
+  /**
+   * ADR-7's read-back source — one download's history, never a per-row poll.
+   * Sonarr pages and envelopes `{records}`; the shape is read defensively in
+   * case a build answers with a bare array instead, the same accommodation
+   * `historyFor` already makes for the per-item route.
+   */
+  async historyForDownload(
+    downloadId: string,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrHistoryEvent[]>> {
+    const context = `${this.kind} history by download`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url('/history', { downloadId, pageSize: DOWNLOAD_HISTORY_PAGE_SIZE }),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    const envelope = body.value as { records?: unknown } | null;
+    const raw = Array.isArray(body.value)
+      ? body.value
+      : (Array.isArray(envelope?.records) ? envelope.records : null);
+
+    if (raw === null) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a history array.` },
+      };
+    }
+
+    return { ok: true, value: raw.map(toArrHistoryEvent) };
+  }
+
+  /**
+   * The episode picker's source (ADR-4). Sonarr only — Radarr's mapping
+   * cannot move to another episode because it has none, and a Radarr call
+   * would 404 for a reason the operator cannot act on.
+   */
+  async seriesEpisodes(
+    seriesId: number,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrEpisodeRef[]>> {
+    const context = `${this.kind} series episodes`;
+    if (this.kind !== 'sonarr') {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: 'Only Sonarr has episodes to pick from.' },
+      };
+    }
+
+    const combined = this.withTimeout(signal);
+    const response = await requestWithRetry(
+      this.url('/episode', { seriesId }),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return an episode array.` },
+      };
+    }
+
+    return { ok: true, value: body.value.map(toEpisodeRef) };
+  }
+
+  /* ── Decisions (custom formats, quality profiles, explainer) ─────────────── */
+
+  async customFormats(signal?: AbortSignal): Promise<ClientResult<ArrCustomFormatRef[]>> {
+    const context = `${this.kind} custom formats`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url('/customformat'),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) return { ok: true, value: [] };
+    return { ok: true, value: body.value.map(toCustomFormatRef).filter((f) => f.id >= 0) };
+  }
+
+  /**
+   * The full `/qualityprofile` (ADR-11) — `formatItems`, `cutoff` and the
+   * three score thresholds the explainer states alongside the comparison.
+   * Distinct from `qualityProfiles()`, which stays the gaps grid's `{id,
+   * name}` reduction and is left untouched.
+   */
+  async qualityProfileDetails(signal?: AbortSignal): Promise<ClientResult<ArrQualityProfileDetail[]>> {
+    const context = `${this.kind} quality profile details`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url('/qualityprofile'),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) return { ok: true, value: [] };
+    return { ok: true, value: body.value.map(toQualityProfileDetail) };
+  }
+
+  /**
+   * The on-disk side of the explainer (ADR-10), read only when the candidate
+   * does not already carry the existing episode/movie's quality inline — this
+   * is a per-file fetch, never issued per row of a grid (NFR2).
+   *
+   * A 404 is a real answer here, not a failure: the file the candidate used to
+   * replace may already be gone. It becomes `value: null`, not an error.
+   */
+  async existingFile(
+    fileId: number,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrExistingFile | null>> {
+    const context = `${this.kind} existing file`;
+    const path = this.kind === 'sonarr' ? `/episodefile/${fileId}` : `/moviefile/${fileId}`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(this.url(path), this.requestInit(combined), combined);
+    if (!response.ok) return response;
+    if (response.value.status === 404) {
+      await response.value.body?.cancel().catch(() => {});
+      return { ok: true, value: null };
+    }
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    return { ok: true, value: toExistingFile(body.value, fileId) };
+  }
+
+  /**
+   * One gap item's own candidate releases (ADR-13) — the explicit "Evaluate
+   * releases" button, never run on open. Same deadline and the same
+   * normalizer as `evaluate()`: it is the same expensive interactive search,
+   * targeted at an episode or a movie instead of a parsed release.
+   */
+  async releasesForItem(
+    target: { episodeId?: number; movieId?: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ReleaseCandidate[]>> {
+    const context = `${this.kind} releases for item`;
+    const params = this.kind === 'sonarr'
+      ? { episodeId: target.episodeId ?? undefined }
+      : { movieId: target.movieId ?? undefined };
+
+    if (params.episodeId === undefined && params.movieId === undefined) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} needs a resolved episode or movie id.` },
+      };
+    }
+
+    const combined = this.withTimeout(signal, EVALUATE_DEADLINE_MS);
+    const response = await requestWithRetry(
+      this.url('/release', params),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a release array.` },
+      };
+    }
+
+    return { ok: true, value: body.value.map(toReleaseCandidate) };
+  }
+
+  /* ── Root folders (unmapped-folders screen) ───────────────────────────────── */
+
+  /**
+   * `GET /rootfolder` (ADR-9). `unmappedFolders` is preserved as the upstream
+   * sent it — absent stays `null`, present-and-empty stays `[]` — because the
+   * two states are rendered differently and collapsing them here would make
+   * that distinction unrecoverable downstream.
+   */
+  async rootFolders(signal?: AbortSignal): Promise<ClientResult<ArrRootFolder[]>> {
+    const context = `${this.kind} root folders`;
+    const combined = this.withTimeout(signal);
+
+    const response = await requestWithRetry(
+      this.url('/rootfolder'),
+      this.requestInit(combined),
+      combined,
+    );
+    if (!response.ok) return response;
+    if (!response.value.ok) {
+      return { ok: false, error: classifyResponse(response.value, context) };
+    }
+
+    const body = await readJson(response.value, context);
+    if (!body.ok) return body;
+
+    if (!Array.isArray(body.value)) {
+      return {
+        ok: false,
+        error: { kind: 'upstream-error', reason: `${context} did not return a root folder array.` },
+      };
+    }
+
+    return { ok: true, value: body.value.map(toRootFolder) };
   }
 
   /* ── Library gaps ──────────────────────────────────────────────────────── */
@@ -1192,6 +1537,9 @@ export function toParsedTarget(input: unknown, kind: InstanceKind): ParsedTarget
       fullSeason: false,
       isMultiSeason: false,
       episodeCount: 0,
+      qualityProfileId: asNumberOrNull(movie?.qualityProfileId),
+      episodeId: null,
+      fileId: asBool(movie?.hasFile) ? positiveIdOrNull(movie?.movieFileId) : null,
     };
   }
 
@@ -1199,6 +1547,7 @@ export function toParsedTarget(input: unknown, kind: InstanceKind): ParsedTarget
   const info = (raw.parsedEpisodeInfo ?? null) as Record<string, unknown> | null;
   const seriesId = typeof series?.id === 'number' ? series.id : null;
   const episodes = Array.isArray(raw.episodes) ? raw.episodes : [];
+  const firstEpisode = episodes[0] as Record<string, unknown> | undefined;
   return {
     resolved: seriesId !== null,
     seriesId,
@@ -1212,7 +1561,15 @@ export function toParsedTarget(input: unknown, kind: InstanceKind): ParsedTarget
     fullSeason: asBool(info?.fullSeason),
     isMultiSeason: asBool(info?.isMultiSeason),
     episodeCount: episodes.length,
+    qualityProfileId: asNumberOrNull(series?.qualityProfileId),
+    episodeId: positiveIdOrNull(firstEpisode?.id),
+    fileId: asBool(firstEpisode?.hasFile) ? positiveIdOrNull(firstEpisode?.episodeFileId) : null,
   };
+}
+
+/** The *arrs report "no file" as `0`, not null. */
+function positiveIdOrNull(value: unknown): number | null {
+  return typeof value === 'number' && value > 0 ? value : null;
 }
 
 /**
@@ -1228,6 +1585,8 @@ function rejectionText(entry: unknown): string {
 
 export function toReleaseCandidate(input: unknown): ReleaseCandidate {
   const raw = (input ?? {}) as Record<string, unknown>;
+  const episodes = Array.isArray(raw.episodes) ? raw.episodes : [];
+  const movie = raw.movie as { id?: unknown } | undefined;
   return {
     title: asString(raw.title),
     infoHash: asStringOrNull(raw.infoHash),
@@ -1235,6 +1594,251 @@ export function toReleaseCandidate(input: unknown): ReleaseCandidate {
     rejections: Array.isArray(raw.rejections)
       ? raw.rejections.map(rejectionText).filter((entry) => entry.length > 0)
       : [],
+    quality: toQualityModel(raw.quality),
+    customFormats: toCustomFormatRefs(raw.customFormats),
+    customFormatScore: asNumberOrNull(raw.customFormatScore),
+    episodeIds: episodes
+      .map((entry) => asNumberOrNull((entry as { id?: unknown } | null)?.id))
+      .filter((id): id is number => id !== null),
+    movieId: typeof movie?.id === 'number' ? movie.id : null,
+    indexer: asStringOrNull(raw.indexer),
+  };
+}
+
+/* ── Force import / decisions / root-folder parsing (stuck-item-triage, T2) ── */
+
+/**
+ * `{quality:{...}, revision:{...}}`, kept intact rather than reduced — it is
+ * echoed back verbatim in the `ManualImport` command (OQ-5). `null` when
+ * either half is missing, since a partial quality object cannot be replayed.
+ */
+function toQualityModel(input: unknown): ArrQualityModel | null {
+  const raw = input as { quality?: unknown; revision?: unknown } | null;
+  const quality = raw?.quality as
+    | { id?: unknown; name?: unknown; source?: unknown; resolution?: unknown }
+    | undefined;
+  const revision = raw?.revision as
+    | { version?: unknown; real?: unknown; isRepack?: unknown }
+    | undefined;
+  if (!quality || typeof quality.id !== 'number' || typeof quality.name !== 'string') return null;
+
+  return {
+    quality: {
+      id: quality.id,
+      name: quality.name,
+      source: typeof quality.source === 'string' ? quality.source : undefined,
+      resolution: typeof quality.resolution === 'number' ? quality.resolution : undefined,
+    },
+    revision: {
+      version: asNumber(revision?.version, 1),
+      real: asNumber(revision?.real, 0),
+      isRepack: asBool(revision?.isRepack),
+    },
+  };
+}
+
+function toCustomFormatRefs(input: unknown): ArrCustomFormatRef[] {
+  if (!Array.isArray(input)) return [];
+  return input.map(toCustomFormatRef).filter((entry) => entry.id >= 0);
+}
+
+function toCustomFormatRef(input: unknown): ArrCustomFormatRef {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  return { id: asNumber(raw.id, -1), name: asString(raw.name) };
+}
+
+function toLanguageRefs(input: unknown): { id: number; name: string }[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry) => {
+      const raw = (entry ?? {}) as Record<string, unknown>;
+      return { id: asNumber(raw.id, -1), name: asString(raw.name) };
+    })
+    .filter((lang) => lang.id >= 0);
+}
+
+export function toEpisodeRef(input: unknown): ArrEpisodeRef {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  // `0` is Sonarr's "no file" sentinel on this field, not a real id — treating
+  // it as one would make ADR-8's replacement check fire on every episode.
+  const episodeFileId = asNumberOrNull(raw.episodeFileId);
+  return {
+    id: asNumber(raw.id, -1),
+    seasonNumber: asNumber(raw.seasonNumber, -1),
+    episodeNumber: asNumber(raw.episodeNumber, -1),
+    title: asStringOrNull(raw.title),
+    hasFile: raw.hasFile === true,
+    episodeFileId: episodeFileId && episodeFileId > 0 ? episodeFileId : null,
+  };
+}
+
+/**
+ * One `/manualimport` candidate (OQ-5), normalized across Sonarr's
+ * `series`+`seasonNumber`+`episodes` nesting and Radarr's `movie` nesting.
+ */
+export function toImportCandidate(input: unknown, kind: InstanceKind): ArrImportCandidate {
+  const raw = (input ?? {}) as Record<string, unknown>;
+
+  const series = raw.series as { id?: unknown; title?: unknown; qualityProfileId?: unknown } | undefined;
+  const episodes = Array.isArray(raw.episodes) ? raw.episodes.map(toEpisodeRef) : [];
+  const movie = raw.movie as
+    | {
+      id?: unknown;
+      title?: unknown;
+      year?: unknown;
+      hasFile?: unknown;
+      movieFileId?: unknown;
+      qualityProfileId?: unknown;
+    }
+    | undefined;
+
+  const movieFileId = asNumberOrNull(movie?.movieFileId);
+
+  return {
+    path: asString(raw.path),
+    relativePath: asStringOrNull(raw.relativePath),
+    name: asStringOrNull(raw.name),
+    size: asNumber(raw.size),
+    quality: toQualityModel(raw.quality),
+    languages: toLanguageRefs(raw.languages),
+    releaseGroup: asStringOrNull(raw.releaseGroup),
+    indexerFlags: asNumber(raw.indexerFlags),
+    releaseType: asStringOrNull(raw.releaseType),
+    customFormats: toCustomFormatRefs(raw.customFormats),
+    customFormatScore: asNumberOrNull(raw.customFormatScore),
+    rejections: Array.isArray(raw.rejections)
+      ? raw.rejections.map(rejectionText).filter((entry) => entry.length > 0)
+      : [],
+    downloadId: asStringOrNull(raw.downloadId),
+    seriesId: kind === 'sonarr' && typeof series?.id === 'number' ? series.id : null,
+    seriesTitle: kind === 'sonarr' ? asStringOrNull(series?.title) : null,
+    seasonNumber: kind === 'sonarr' ? asNumberOrNull(raw.seasonNumber) : null,
+    episodes: kind === 'sonarr' ? episodes : [],
+    movieId: kind === 'radarr' && typeof movie?.id === 'number' ? movie.id : null,
+    movie: kind === 'radarr' && typeof movie?.id === 'number' && typeof movie.title === 'string'
+      ? {
+        id: movie.id,
+        title: movie.title,
+        year: asNumberOrNull(movie.year),
+        hasFile: movie.hasFile === true,
+        movieFileId: movieFileId && movieFileId > 0 ? movieFileId : null,
+      }
+      : null,
+    qualityProfileId: asNumberOrNull(kind === 'sonarr' ? series?.qualityProfileId : movie?.qualityProfileId),
+  };
+}
+
+/** `data` keys come back loosely typed; only string values survive (REQ-OPS-007 reads them verbatim). */
+function toHistoryData(input: unknown): Record<string, string> {
+  if (!input || typeof input !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof value === 'string') out[key] = value;
+  }
+  return out;
+}
+
+export function toArrHistoryEvent(input: unknown): ArrHistoryEvent {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  return {
+    id: asNumber(raw.id, -1),
+    eventType: asString(raw.eventType, 'unknown'),
+    date: asString(raw.date),
+    downloadId: asStringOrNull(raw.downloadId),
+    data: toHistoryData(raw.data),
+  };
+}
+
+/**
+ * `cutoffName` is resolved against `items`, recursing into groups — the
+ * cutoff is an id into that same list, and a quality nested inside a group
+ * item is still a valid cutoff target (ADR-10 reads the name, not the id).
+ */
+function resolveQualityName(items: unknown, targetId: number): string | null {
+  if (!Array.isArray(items)) return null;
+  for (const entry of items) {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    const quality = item.quality as { id?: unknown; name?: unknown } | undefined;
+    if (quality && quality.id === targetId && typeof quality.name === 'string') {
+      return quality.name;
+    }
+    if (item.id === targetId && typeof item.name === 'string') return item.name;
+    if (Array.isArray(item.items)) {
+      const nested = resolveQualityName(item.items, targetId);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+export function toQualityProfileDetail(input: unknown): ArrQualityProfileDetail {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const cutoff = asNumber(raw.cutoff, -1);
+  const formatItems = Array.isArray(raw.formatItems)
+    ? raw.formatItems.map((entry) => {
+      const item = (entry ?? {}) as Record<string, unknown>;
+      return {
+        format: asNumber(item.format, -1),
+        name: asString(item.name),
+        score: asNumber(item.score),
+      };
+    })
+    : [];
+
+  return {
+    id: asNumber(raw.id, -1),
+    name: asString(raw.name),
+    upgradeAllowed: raw.upgradeAllowed === true,
+    cutoff,
+    cutoffName: resolveQualityName(raw.items, cutoff),
+    minFormatScore: asNumber(raw.minFormatScore),
+    cutoffFormatScore: asNumber(raw.cutoffFormatScore),
+    minUpgradeFormatScore: asNumberOrNull(raw.minUpgradeFormatScore),
+    formatItems,
+  };
+}
+
+export function toExistingFile(input: unknown, fallbackId: number): ArrExistingFile {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  return {
+    id: asNumber(raw.id, fallbackId),
+    path: asStringOrNull(raw.path),
+    relativePath: asStringOrNull(raw.relativePath),
+    sceneName: asStringOrNull(raw.sceneName),
+    size: asNumber(raw.size),
+    quality: toQualityModel(raw.quality),
+    customFormats: toCustomFormatRefs(raw.customFormats),
+    customFormatScore: asNumberOrNull(raw.customFormatScore),
+    languages: toLanguageRefs(raw.languages),
+    qualityCutoffNotMet: typeof raw.qualityCutoffNotMet === 'boolean' ? raw.qualityCutoffNotMet : null,
+  };
+}
+
+/**
+ * `unmappedFolders` is preserved as `null` when the key is absent (ADR-9,
+ * FR20) — `in` rather than a truthiness check, because `[]` and `undefined`
+ * must stay distinguishable all the way through this function.
+ */
+export function toRootFolder(input: unknown): ArrRootFolder {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const hasKey = 'unmappedFolders' in raw;
+  const unmapped = hasKey && Array.isArray(raw.unmappedFolders)
+    ? raw.unmappedFolders.map((entry) => {
+      const folder = (entry ?? {}) as Record<string, unknown>;
+      return {
+        name: asString(folder.name),
+        path: asString(folder.path),
+        relativePath: asStringOrNull(folder.relativePath),
+      };
+    })
+    : null;
+
+  return {
+    id: asNumber(raw.id, -1),
+    path: asString(raw.path),
+    accessible: raw.accessible === true,
+    freeSpace: asNumberOrNull(raw.freeSpace),
+    unmappedFolders: unmapped,
   };
 }
 

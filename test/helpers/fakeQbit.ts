@@ -10,6 +10,8 @@ export interface FakeTorrent {
   dlspeed?: number;
   eta?: number;
   state?: string;
+  /** Epoch seconds; `-1` while downloading, as qBittorrent reports it. */
+  completion_on?: number;
 }
 
 export interface FakeQbit {

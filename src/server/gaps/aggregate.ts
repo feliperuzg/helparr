@@ -219,6 +219,7 @@ function attribute(target: Target, record: ArrGapRecord, library: LibrarySnapsho
     wantedQuality: profileId !== null
       ? library?.profiles.get(profileId) ?? null
       : null,
+    profileId,
     targetPath: record.kind === 'movie' ? record.path : series?.path ?? null,
     lastSearchAt: record.lastSearchAt,
     // Never filled here. The inference costs one `/history` request per item

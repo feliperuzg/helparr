@@ -97,7 +97,7 @@ export function countsAsBreakerFailure<T>(result: ClientResult<T>): boolean {
  */
 export type ArrQueueRecord = Omit<
   QueueRecord,
-  'id' | 'instanceId' | 'instanceLabel' | 'instanceKind' | 'torrent' | 'stall'
+  'id' | 'instanceId' | 'instanceLabel' | 'instanceKind' | 'torrent' | 'stall' | 'cause'
 >;
 
 export interface ArrQueueRead {
@@ -169,12 +169,23 @@ export interface ReleaseDescriptor {
  * One release as the destination instance's *own* interactive search reports
  * it. `rejections` is the field the whole evaluation exists for; the identity
  * fields are only there to match it back to the release the operator picked.
+ *
+ * The quality/custom-format/target fields were added for `stuck-item-triage`
+ * (OQ-6, ADR-10, ADR-13): the explainer joins `customFormats` against the
+ * profile's `formatItems`, and `episodeIds`/`movieId`/`indexer` let the panel
+ * attribute the release to a target and a source without a second request.
  */
 export interface ReleaseCandidate {
   title: string;
   infoHash: string | null;
   guid: string | null;
   rejections: string[];
+  quality: ArrQualityModel | null;
+  customFormats: ArrCustomFormatRef[];
+  customFormatScore: number | null;
+  episodeIds: number[];
+  movieId: number | null;
+  indexer: string | null;
 }
 
 /**
@@ -241,6 +252,7 @@ export type ArrGapRecord = Omit<
   | 'groupTitle'
   | 'targetPath'
   | 'wantedQuality'
+  | 'profileId'
   | 'inferred'
 > & {
   /** Radarr carries its own path inline; Sonarr does not (null there). */
@@ -458,6 +470,225 @@ export interface RenameClient extends InstanceClient {
 export function isRenameClient(client: InstanceClient): client is RenameClient {
   return (client.kind === 'sonarr' || client.kind === 'radarr')
     && typeof (client as RenameClient).renamePreview === 'function';
+}
+
+/* ── Import, decisions, root-folder capabilities (stuck-item-triage, T2) ──── */
+
+/**
+ * `quality.quality` + `quality.revision`, kept intact rather than reduced to a
+ * name (unlike `toParsedTarget`'s `qualityName`): it is echoed back verbatim in
+ * the `ManualImport` command (OQ-5), so every field the instance sent has to
+ * survive the round trip unchanged.
+ */
+export interface ArrQualityModel {
+  quality: {
+    id: number;
+    name: string;
+    source?: string;
+    resolution?: number;
+  };
+  revision: {
+    version: number;
+    real: number;
+    isRepack: boolean;
+  };
+}
+
+/** `{id, name}` off a `customFormats` entry — the join key into `/customformat`. */
+export interface ArrCustomFormatRef {
+  id: number;
+  name: string;
+}
+
+/** One episode as a Sonarr import candidate nests it (OQ-5). */
+export interface ArrEpisodeRef {
+  id: number;
+  seasonNumber: number;
+  episodeNumber: number;
+  title: string | null;
+  hasFile: boolean;
+  /** `0` reads as "no file", not as a real id (ADR-8 needs this distinction). */
+  episodeFileId: number | null;
+}
+
+/**
+ * One `/manualimport?downloadId=` candidate, normalized across Sonarr's
+ * `series`/`episodes` nesting and Radarr's `movie` nesting (OQ-5). Carries
+ * both the content description and the resolved target, because the target is
+ * exactly what ADR-4's mapping override and ADR-8's replacement flag need.
+ */
+export interface ArrImportCandidate {
+  path: string;
+  relativePath: string | null;
+  name: string | null;
+  size: number;
+  quality: ArrQualityModel | null;
+  languages: { id: number; name: string }[];
+  releaseGroup: string | null;
+  indexerFlags: number;
+  releaseType: string | null;
+  customFormats: ArrCustomFormatRef[];
+  customFormatScore: number | null;
+  rejections: string[];
+  downloadId: string | null;
+  seriesId: number | null;
+  seriesTitle: string | null;
+  seasonNumber: number | null;
+  episodes: ArrEpisodeRef[];
+  movieId: number | null;
+  movie: {
+    id: number;
+    title: string;
+    year: number | null;
+    hasFile: boolean;
+    movieFileId: number | null;
+  } | null;
+  /** The series' or movie's quality profile, for the explainer's thresholds (FR17). */
+  qualityProfileId: number | null;
+}
+
+/**
+ * One file in a `ManualImport` command's `files[]` (OQ-5) — the candidate
+ * re-projected onto the shape the command actually takes. Sonarr carries
+ * `seriesId`+`episodeIds`; Radarr carries `movieId`; the caller strips
+ * whichever pair does not apply rather than sending both.
+ */
+export interface ManualImportFile {
+  path: string;
+  seriesId?: number;
+  episodeIds?: number[];
+  movieId?: number;
+  quality: ArrQualityModel | null;
+  languages: { id: number; name: string }[];
+  releaseGroup: string | null;
+  indexerFlags: number;
+  releaseType?: string | null;
+  downloadId: string | null;
+}
+
+/**
+ * One `/history` row, reduced to what ADR-7's read-back needs: the event type
+ * to find `downloadFolderImported`, and `data` for its `droppedPath` /
+ * `importedPath` pair. Everything else on a history record is noise here.
+ */
+export interface ArrHistoryEvent {
+  id: number;
+  eventType: string;
+  date: string;
+  downloadId: string | null;
+  data: Record<string, string>;
+}
+
+/**
+ * The full `/qualityprofile` entry (ADR-11), not just `{id, name}` —
+ * `QualityProfileSummary` stays the gaps grid's reduced shape; this is the
+ * explainer's.
+ */
+export interface ArrQualityProfileDetail {
+  id: number;
+  name: string;
+  upgradeAllowed: boolean;
+  cutoff: number;
+  /** Resolved by walking `items`, recursing into groups, for the cutoff id. */
+  cutoffName: string | null;
+  minFormatScore: number;
+  cutoffFormatScore: number;
+  minUpgradeFormatScore: number | null;
+  formatItems: { format: number; name: string; score: number }[];
+}
+
+/** `/episodefile/{id}` (Sonarr) or `/moviefile/{id}` (Radarr) — the on-disk side of the explainer. */
+export interface ArrExistingFile {
+  id: number;
+  path: string | null;
+  relativePath: string | null;
+  sceneName: string | null;
+  size: number;
+  quality: ArrQualityModel | null;
+  customFormats: ArrCustomFormatRef[];
+  customFormatScore: number | null;
+  languages: { id: number; name: string }[];
+  qualityCutoffNotMet: boolean | null;
+}
+
+/**
+ * `/rootfolder` (ADR-9, FR20). `unmappedFolders: null` means the key was
+ * absent from the response — "unknown", not "empty" — and `[]` means the key
+ * was present with nothing in it. Collapsing the two would turn a slow mount
+ * that missed its budget into a confident "nothing unmapped here".
+ */
+export interface ArrRootFolder {
+  id: number;
+  path: string;
+  accessible: boolean;
+  freeSpace: number | null;
+  unmappedFolders: { name: string; path: string; relativePath: string | null }[] | null;
+}
+
+export interface ImportClient extends InstanceClient {
+  /** `GET /manualimport?downloadId=…&filterExistingFiles=false` — the candidate set. */
+  manualImportCandidates(
+    downloadId: string,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrImportCandidate[]>>;
+  /**
+   * `POST /command` with `{name: 'ManualImport', importMode: 'auto', files}`
+   * (ADR-6). `importMode` is always explicit — never inherited from an
+   * instance default.
+   */
+  manualImport(
+    files: ManualImportFile[],
+    signal?: AbortSignal,
+  ): Promise<ClientResult<{ commandId: number }>>;
+  /** `GET /history?downloadId=…&pageSize=…` — ADR-7's read-back source. */
+  historyForDownload(
+    downloadId: string,
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ArrHistoryEvent[]>>;
+  commandStatus(commandId: number, signal?: AbortSignal): Promise<ClientResult<ArrCommandStatus>>;
+  /**
+   * `GET /episode?seriesId=` — the episode picker's source (ADR-4). Sonarr
+   * only; Radarr answers with a typed upstream-error failure rather than
+   * guessing at an endpoint that does not exist for it.
+   */
+  seriesEpisodes(seriesId: number, signal?: AbortSignal): Promise<ClientResult<ArrEpisodeRef[]>>;
+}
+
+export function isImportClient(client: InstanceClient): client is ImportClient {
+  return (client.kind === 'sonarr' || client.kind === 'radarr')
+    && typeof (client as ImportClient).manualImportCandidates === 'function';
+}
+
+export interface DecisionsClient extends InstanceClient {
+  customFormats(signal?: AbortSignal): Promise<ClientResult<ArrCustomFormatRef[]>>;
+  qualityProfileDetails(signal?: AbortSignal): Promise<ClientResult<ArrQualityProfileDetail[]>>;
+  /** `/episodefile/{id}` on Sonarr, `/moviefile/{id}` on Radarr. */
+  existingFile(fileId: number, signal?: AbortSignal): Promise<ClientResult<ArrExistingFile | null>>;
+  /**
+   * The instance's own interactive search for one gap item (ADR-13):
+   * `GET /release?episodeId=` on Sonarr, `?movieId=` on Radarr. Same
+   * normalizer and the same `EVALUATE_DEADLINE_MS` as `evaluate()` — it is the
+   * same expensive, indexer-hitting call, asked about a different kind of
+   * target.
+   */
+  releasesForItem(
+    target: { episodeId?: number; movieId?: number },
+    signal?: AbortSignal,
+  ): Promise<ClientResult<ReleaseCandidate[]>>;
+}
+
+export function isDecisionsClient(client: InstanceClient): client is DecisionsClient {
+  return (client.kind === 'sonarr' || client.kind === 'radarr')
+    && typeof (client as DecisionsClient).customFormats === 'function';
+}
+
+export interface RootFolderClient extends InstanceClient {
+  rootFolders(signal?: AbortSignal): Promise<ClientResult<ArrRootFolder[]>>;
+}
+
+export function isRootFolderClient(client: InstanceClient): client is RootFolderClient {
+  return (client.kind === 'sonarr' || client.kind === 'radarr')
+    && typeof (client as RootFolderClient).rootFolders === 'function';
 }
 
 export interface ClientConfig {

@@ -15,6 +15,17 @@ export type FakeMode =
   /** The upstream is up but broken — the case that must not be retried away. */
   | 'server-error';
 
+/**
+ * A test's hook into a received `ManualImport` command (ADR-7). `succeeded`
+ * maps a candidate's `path` to the destination it landed at; anything not
+ * named there is left in the candidate list untouched, which is how a partial
+ * import (one file fails, one succeeds) is modelled without a second fixture
+ * shape.
+ */
+export type ManualImportHook = (
+  files: Array<Record<string, unknown>>,
+) => { succeeded?: Record<string, string> } | void;
+
 /** Only the fields the client reads; everything else on a real record is noise. */
 export interface FakeQueueRecord {
   id: number;
@@ -97,14 +108,41 @@ export interface FakeArr {
    * detail read takes: counts absent, never zero.
    */
   setSeriesDetail: (detail: unknown | null) => void;
-  /** What `GET /qualityprofile` returns. */
-  setProfiles: (profiles: Array<{ id: number; name: string }>) => void;
+  /**
+   * What `GET /qualityprofile` returns. Loosened to `unknown[]` (rather than
+   * `{id, name}`) because the same route serves `qualityProfiles()`'s reduced
+   * read and `qualityProfileDetails()`'s full one (ADR-11) — a test for the
+   * latter needs `cutoff`, `items` and `formatItems` on the fixture.
+   */
+  setProfiles: (profiles: unknown[]) => void;
   /** What a history read answers with, for `inferReason`'s input. */
   setHistory: (events: unknown[]) => void;
   /** Search commands received, with their payloads (REQ-GAPS-009). */
   commands: Array<{ body: Record<string, unknown> }>;
   /** Makes `POST /command` answer with this status instead of 201. */
   failCommands: (status: number | null) => void;
+
+  /* ── Force import / decisions / root-folder surface (stuck-item-triage) ──── */
+
+  /** What `GET /manualimport?downloadId=` returns — the query is not filtered on, same as `/release`. */
+  setImportCandidates: (candidates: unknown[]) => void;
+  /**
+   * Lets a test make a `ManualImport` command "land" (ADR-7): called with the
+   * command's `files[]` after it is received. Returning `succeeded` removes
+   * the matching candidate by `path` and appends a `downloadFolderImported`
+   * history event carrying `data.droppedPath`/`data.importedPath`; a path left
+   * out of `succeeded` simply stays a candidate, which is how a partial import
+   * is modelled.
+   */
+  setImportHook: (hook: ManualImportHook | null) => void;
+  /** What `GET /customformat` returns. */
+  setCustomFormats: (formats: unknown[]) => void;
+  /** What `GET /episodefile/{id}` or `GET /moviefile/{id}` returns, keyed by id. Unset answers 404. */
+  setExistingFile: (id: number, body: unknown) => void;
+  /** What `GET /rootfolder` returns. Omit `unmappedFolders` on an entry to model the absent-key case (ADR-9). */
+  setRootFolders: (folders: unknown[]) => void;
+  /** What `GET /episode?seriesId=` returns — the episode picker's source (ADR-4). */
+  setEpisodes: (episodes: unknown[]) => void;
 
   /* ── Rename surface (bulk-rename-preview) ──────────────────────────────── */
 
@@ -289,8 +327,14 @@ export async function startFakeArr(options: {
   let series: unknown[] = [];
   let movies: unknown[] = [];
   let seriesDetail: unknown | null = null;
-  let profiles: Array<{ id: number; name: string }> = [];
+  let profiles: unknown[] = [];
   let history: unknown[] = [];
+  let importCandidates: unknown[] = [];
+  let importHook: ManualImportHook | null = null;
+  let customFormats: unknown[] = [];
+  const existingFiles = new Map<number, unknown>();
+  let rootFolders: unknown[] = [];
+  let episodes: unknown[] = [];
   let commandStatus: number | null = null;
   const wantedRequests: FakeArr['wantedRequests'] = [];
   const commands: FakeArr['commands'] = [];
@@ -394,12 +438,60 @@ export async function startFakeArr(options: {
     }
 
     // Sonarr pages and envelopes; Radarr answers a bare array on its own route.
+    // `downloadId`, when present, filters — the shape `historyForDownload` reads
+    // (ADR-7). Absent, it behaves exactly as the per-item read already did.
     if (url.pathname === `${apiBase}/history`) {
-      send(200, { page: 1, pageSize: history.length, totalRecords: history.length, records: history });
+      const downloadId = url.searchParams.get('downloadId');
+      const records = downloadId
+        ? history.filter((entry) => (entry as Record<string, unknown> | null)?.downloadId === downloadId)
+        : history;
+      send(200, { page: 1, pageSize: records.length, totalRecords: records.length, records });
       return;
     }
     if (url.pathname === `${apiBase}/history/movie`) {
       send(200, history);
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/manualimport`) {
+      send(200, importCandidates);
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/customformat`) {
+      send(200, customFormats);
+      return;
+    }
+
+    if (url.pathname.startsWith(`${apiBase}/episodefile/`)) {
+      const id = Number(url.pathname.slice(`${apiBase}/episodefile/`.length));
+      const file = existingFiles.get(id);
+      if (file === undefined) {
+        send(404, { error: 'Not found' });
+        return;
+      }
+      send(200, file);
+      return;
+    }
+
+    if (url.pathname.startsWith(`${apiBase}/moviefile/`)) {
+      const id = Number(url.pathname.slice(`${apiBase}/moviefile/`.length));
+      const file = existingFiles.get(id);
+      if (file === undefined) {
+        send(404, { error: 'Not found' });
+        return;
+      }
+      send(200, file);
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/rootfolder`) {
+      send(200, rootFolders);
+      return;
+    }
+
+    if (url.pathname === `${apiBase}/episode`) {
+      send(200, episodes);
       return;
     }
 
@@ -454,11 +546,36 @@ export async function startFakeArr(options: {
       let raw = '';
       req.on('data', (chunk) => { raw += chunk; });
       req.on('end', () => {
+        let parsed: Record<string, unknown>;
         try {
-          commands.push({ body: JSON.parse(raw || '{}') as Record<string, unknown> });
+          parsed = JSON.parse(raw || '{}') as Record<string, unknown>;
+          commands.push({ body: parsed });
         } catch {
-          commands.push({ body: { unparseable: raw } });
+          parsed = { unparseable: raw };
+          commands.push({ body: parsed });
         }
+
+        // `ManualImport` is the one command this fake can make "land" (ADR-7):
+        // a hook decides which files succeeded, and the fake mutates its own
+        // candidate list and history exactly as a real import would.
+        if (parsed.name === 'ManualImport' && Array.isArray(parsed.files) && importHook) {
+          const files = parsed.files as Array<Record<string, unknown>>;
+          const result = importHook(files);
+          const succeeded = result?.succeeded ?? {};
+          for (const [path, importedPath] of Object.entries(succeeded)) {
+            importCandidates = importCandidates.filter(
+              (candidate) => (candidate as Record<string, unknown> | null)?.path !== path,
+            );
+            const file = files.find((f) => f.path === path);
+            history.push({
+              eventType: 'downloadFolderImported',
+              date: new Date().toISOString(),
+              downloadId: (file?.downloadId as string | undefined) ?? null,
+              data: { droppedPath: path, importedPath },
+            });
+          }
+        }
+
         if (commandStatus !== null) {
           send(commandStatus, { message: 'Command refused' });
           return;
@@ -549,6 +666,15 @@ export async function startFakeArr(options: {
     setProfiles: (next) => { profiles = next; },
     setHistory: (events) => { history = events; },
     failCommands: (status) => { commandStatus = status; },
+    setImportCandidates: (candidates) => { importCandidates = candidates; },
+    setImportHook: (hook) => { importHook = hook; },
+    setCustomFormats: (formats) => { customFormats = formats; },
+    setExistingFile: (id, body) => {
+      if (body === undefined) existingFiles.delete(id);
+      else existingFiles.set(id, body);
+    },
+    setRootFolders: (folders) => { rootFolders = folders; },
+    setEpisodes: (next) => { episodes = next; },
     setRenamePreview: (resolver) => { renamePreview = resolver; renameCallCounts.clear(); },
     renameReads,
     setCommandOutcome: (outcome) => { commandOutcome = { ...commandOutcome, ...outcome }; },

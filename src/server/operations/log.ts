@@ -2,6 +2,7 @@ import 'server-only';
 
 import { randomUUID } from 'node:crypto';
 
+import type { ImportMapping, ImportOutcomeKind, MappingSource } from '@/lib/importPlan';
 import {
   type OperationFilter,
   type OperationOutcome,
@@ -30,7 +31,7 @@ import { getDb } from '@/server/db';
  */
 
 export interface OperationInput {
-  /** `grab` today. `attach` and `rename` land here unchanged (ADR-10). */
+  /** `grab`, `attach`, `rename`, and `import` (force import) — free text (ADR-10). */
   kind: string;
   summary: string;
   /**
@@ -232,6 +233,83 @@ export function listRenameFileOutcomes(operationId: string): RenameFileOutcomeIn
     proposedPath: row.proposed_path,
     outcome: row.outcome,
     detail: row.detail,
+  }));
+}
+
+/* ── Force-import file outcomes (stuck-item-triage, T6) ───────────────────── */
+
+/**
+ * One file's result within a force import (REQ-OPS-001's force-import
+ * extension). `destination` is the item the file was mapped to plus where the
+ * instance's history says it landed — `importedPath` is null unless the
+ * read-back found it (ADR-7).
+ */
+export interface ImportFileOutcomeInput {
+  path: string;
+  destination: {
+    mapping: ImportMapping | null;
+    importedPath: string | null;
+  };
+  mappingSource: MappingSource;
+  outcome: ImportOutcomeKind;
+  error: string | null;
+}
+
+/**
+ * Writes the parent operation and every file outcome in one transaction, for
+ * the same reasons `recordRenameOperation` does: the plan holds in-flight
+ * state, so the log row is written once, when every outcome is known. A plan
+ * refused at the drift check is never logged — nothing was sent (ADR-7).
+ *
+ * `outcome` is `'succeeded'` only when every file succeeded. An `unverified`
+ * file makes the run `'failed'` too: the log may not claim an import the
+ * read-back could not confirm.
+ */
+export function recordImportOperation(
+  input: OperationInput,
+  files: ImportFileOutcomeInput[],
+): OperationRead {
+  const db = getDb();
+  const insertFile = db.prepare(`
+    INSERT INTO import_file_outcome
+      (id, operation_id, path, destination_json, mapping_source, outcome, error)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  return db.transaction(() => {
+    const operation = recordOperation(input);
+    for (const file of files) {
+      insertFile.run(
+        randomUUID(),
+        operation.id,
+        // Copied rather than joined, as rename's are: the log outlives the plan.
+        file.path,
+        JSON.stringify(file.destination),
+        file.mappingSource,
+        file.outcome,
+        file.error,
+      );
+    }
+    return operation;
+  })();
+}
+
+export function listImportFileOutcomes(operationId: string): ImportFileOutcomeInput[] {
+  return (getDb().prepare(`
+    SELECT path, destination_json, mapping_source, outcome, error
+      FROM import_file_outcome WHERE operation_id = ? ORDER BY rowid
+  `).all(operationId) as Array<{
+    path: string;
+    destination_json: string;
+    mapping_source: MappingSource;
+    outcome: ImportOutcomeKind;
+    error: string | null;
+  }>).map((row) => ({
+    path: row.path,
+    destination: JSON.parse(row.destination_json) as ImportFileOutcomeInput['destination'],
+    mappingSource: row.mapping_source,
+    outcome: row.outcome,
+    error: row.error,
   }));
 }
 

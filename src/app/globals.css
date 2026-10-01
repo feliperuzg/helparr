@@ -108,16 +108,20 @@
   --color-status-ok-bg:    var(--color-accent-muted);
   --color-status-warn:     var(--color-warn-raw);
   --color-status-warn-bg:  rgba(251, 191, 36, 0.14);
-  /* One step lighter than --color-error-raw for the same reason as idle below:
-     the raw red is 4.24:1 on --color-status-error-bg over an elevated surface.
-     The raw value stays put so buttons and diff markers are unaffected. */
-  --color-status-error:    #fa8a8a;
+  /* Lighter than --color-error-raw for the same reason as idle below: the raw
+     red is 4.24:1 on --color-status-error-bg over an elevated surface, and
+     #fa8a8a still measured 4.46:1 on the inspector's Cause badge. #fb9494 is
+     4.81:1 there. The raw value stays put so buttons and diff markers are
+     unaffected. */
+  --color-status-error:    #fb9494;
   --color-status-error-bg: rgba(248, 113, 113, 0.14);
   /* Not `--color-text-muted`: that one is tuned for 6.06:1 against the page
      background, and an idle badge sits on --color-status-idle-bg over an
      elevated surface, where the same value lands at 4.46:1 — under AA for
-     10px text. This is one step lighter, for 5.00:1 in that stack. */
-  --color-status-idle:     hsl(217 10% 64%);
+     10px text. 64% lightness cleared that stack but not a badge on a grid
+     row (3.5:1 on the selected cursor row, where the queue's Cause column and
+     the force-import grid put one); 74% is 4.73:1 there, the worst case. */
+  --color-status-idle:     hsl(217 10% 74%);
   --color-status-idle-bg:  rgba(148, 163, 184, 0.12);
 
   /* Diff roles for the rename preview */
@@ -829,7 +833,7 @@ select.input {
 .qgrid {
   --qgrid-cols:
     32px                  /* select   */
-    124px                 /* state    */
+    152px                 /* cause    */
     minmax(0, 1fr)        /* release  */
     minmax(0, 0.6fr)      /* target   */
     132px                 /* progress */
@@ -929,11 +933,11 @@ select.input {
    columns never drop: selection and the non-colour status channel are
    requirements, not affordances (REQ-QUEUE-017). */
 @media (max-width: 1279px) {
-  .qgrid { --qgrid-cols: 32px 124px minmax(0, 1fr) minmax(0, 0.6fr) 132px 76px; }
+  .qgrid { --qgrid-cols: 32px 152px minmax(0, 1fr) minmax(0, 0.6fr) 132px 76px; }
   .qgrid .qcol-eta, .qgrid .qcol-peers { display: none; }
 }
 @media (max-width: 899px) {
-  .qgrid { --qgrid-cols: 32px 124px minmax(0, 1fr); }
+  .qgrid { --qgrid-cols: 32px 152px minmax(0, 1fr); }
   .qgrid .qcol-target, .qgrid .qcol-progress, .qgrid .qcol-size { display: none; }
 }
 

@@ -29,6 +29,9 @@ const NAV: NavItem[] = [
   // screens that write to it, not after the configuration screen.
   { to: '/operations', label: 'Activity', icon: 'history', key: '5' },
   { to: '/settings', label: 'Settings', icon: 'settings', key: '6' },
+  // Unmapped sits after every screen that can act, because it is the one
+  // screen that deliberately cannot (REQ-GAPS-024, ADR-9).
+  { to: '/unmapped', label: 'Unmapped', icon: 'folder', key: '7' },
 ];
 
 /**

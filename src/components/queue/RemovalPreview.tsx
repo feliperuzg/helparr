@@ -57,18 +57,31 @@ const FLAGS: FlagSpec[] = [
  *  more" — every affected item is named (REQ-QUEUE-013). */
 const SCROLL_AFTER = 20;
 
+export interface RemovalPreviewProps {
+  records: QueueRecord[];
+  onCancel: () => void;
+  onConfirm: (flags: RemovalRequest) => void;
+  busy: boolean;
+  /**
+   * Flags to open with instead of the non-destructive defaults — set when the
+   * preview is opened from a cause's remedy (REQ-QUEUE-019, T15). Read once, on
+   * mount: the operator still sees every checkbox and can change any of them
+   * before confirming. A remedy names the flags; it never sends them.
+   */
+  initialFlags?: RemovalRequest;
+  /** Why the flags are not the defaults, stated above them when they are not. */
+  presetReason?: string;
+}
+
 export default function RemovalPreview({
   records,
   onCancel,
   onConfirm,
   busy,
-}: {
-  records: QueueRecord[];
-  onCancel: () => void;
-  onConfirm: (flags: RemovalRequest) => void;
-  busy: boolean;
-}) {
-  const [flags, setFlags] = useState<RemovalRequest>(INITIAL);
+  initialFlags,
+  presetReason,
+}: RemovalPreviewProps) {
+  const [flags, setFlags] = useState<RemovalRequest>(() => initialFlags ?? INITIAL);
   const count = records.length;
 
   // Escape and backdrop-click are inert while the requests are in flight —
@@ -116,6 +129,12 @@ export default function RemovalPreview({
           </li>
         ))}
       </ul>
+
+      {initialFlags && presetReason ? (
+        <p className="subtle" style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-sm)' }}>
+          {presetReason} Change any of them before confirming.
+        </p>
+      ) : null}
 
       <fieldset className="removal-flags">
         <legend className="sr-only">Removal side effects</legend>

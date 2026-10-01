@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { QueueRecord, TorrentState } from '@/lib/types';
+import { classifyCause } from './cause';
 import { classifyStall } from './stall';
 
 /**
@@ -21,6 +22,7 @@ import { classifyStall } from './stall';
 export function enrichRecords(
   records: QueueRecord[],
   torrents: TorrentState[],
+  now: number = Date.now(),
 ): QueueRecord[] {
   const byHash = new Map<string, TorrentState>();
   for (const torrent of torrents) byHash.set(torrent.hash.toLowerCase(), torrent);
@@ -29,6 +31,10 @@ export function enrichRecords(
     const torrent = record.downloadId
       ? byHash.get(record.downloadId.toLowerCase()) ?? null
       : null;
-    return { ...record, torrent, stall: classifyStall(torrent) };
+    const stall = classifyStall(torrent);
+    // `classifyCause` (ADR-2) runs right after the stall read, with the same
+    // torrent join, so every row reaches the client with exactly one cause —
+    // the client only presents it, never recomputes it.
+    return { ...record, torrent, stall, cause: classifyCause(record, torrent, now) };
   });
 }

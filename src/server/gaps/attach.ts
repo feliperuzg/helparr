@@ -3,6 +3,7 @@ import 'server-only';
 import { isAttachableLink } from '@/lib/attach';
 import type { AttachPreview, Gap, GrabOutcome, SeasonAttachPreview } from '@/lib/types';
 import { grab, resolveTarget, type Attempt } from '@/server/search/grab';
+import { invalidateDecisionsConfig } from '@/server/decisions/configCache';
 import { findGap, readSeriesDetail } from './aggregate';
 import { invalidateLibrary } from './seriesCache';
 
@@ -251,8 +252,11 @@ export async function attach(
 
   // Unconditional, including on a rejection: helparr cannot tell from here
   // whether the instance changed anything on its way to saying no, and a cache
-  // miss costs one library read while a stale cache costs correctness.
+  // miss costs one library read while a stale cache costs correctness. The
+  // decisions config cache is invalidated on the same terms (ADR-11, T9) —
+  // a push can change what the instance's own decision engine does next.
   invalidateLibrary(gap.instanceId);
+  invalidateDecisionsConfig(gap.instanceId);
 
   return outcome;
 }
@@ -316,6 +320,7 @@ export async function attachSeason(
 
   // Unconditional, as the episode attach is, and for the same reason (FR10).
   invalidateLibrary(gap.instanceId);
+  invalidateDecisionsConfig(gap.instanceId);
 
   return outcome;
 }

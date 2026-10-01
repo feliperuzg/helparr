@@ -293,6 +293,136 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 6,
+    name: 'import-plan',
+    up: (db) => {
+      db.exec(`
+        -- One row per "review candidates" open (ADR-3). Plays the same role
+        -- rename_plan plays for rename: apply.ts loads a plan by id, and this
+        -- table is the sole source of truth for which files a confirmed apply
+        -- may touch. No scope_json / title_json equivalent: a force-import
+        -- plan always covers exactly one download, never a multi-title scope.
+        CREATE TABLE import_plan (
+          id               TEXT PRIMARY KEY,
+
+          -- Soft reference, same reasoning as rename_plan_row's instance_id:
+          -- deleting the instance in Settings must not rewrite a plan built
+          -- while it existed.
+          instance_id      TEXT,
+          instance_kind    TEXT NOT NULL CHECK (instance_kind IN ('sonarr','radarr')),
+          instance_label   TEXT NOT NULL,
+
+          -- The queue record's infohash — what manualimport?downloadId= was
+          -- read with, and what the drift re-read (ADR-5) re-reads with.
+          download_id      TEXT NOT NULL,
+          -- Traces the plan back to the *arr queue row it was opened from,
+          -- for the inspector's "view import" link.
+          queue_record_id  INTEGER NOT NULL,
+          title            TEXT NOT NULL,
+
+          phase            TEXT NOT NULL
+                              CHECK (phase IN ('ready','applying','done','refused','expired')),
+
+          -- {reason, changes[]} or null (ADR-5, ADR-8's precedent: no
+          -- force/override column, matching rename's "nowhere to record a
+          -- bypass").
+          refusal_json     TEXT,
+
+          created_at       TEXT NOT NULL,                 -- ISO 8601 UTC
+          -- created_at + 300s, computed once. No column to extend it with,
+          -- mirroring rename_plan.expires_at (FR11's analogue, ADR-3).
+          expires_at       TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_import_plan_expires_at ON import_plan (expires_at);
+
+        -- One row per candidate manualimport reported. path + size together
+        -- are the captured precondition (FR9, REQ-QUEUE-022): apply.ts
+        -- re-reads the candidate set for the same download_id immediately
+        -- before writing and refuses the whole plan on any drift. No
+        -- "force anyway" column — same absence rename_plan_row has.
+        CREATE TABLE import_plan_row (
+          plan_id          TEXT NOT NULL REFERENCES import_plan (id) ON DELETE CASCADE,
+          -- The instance's own candidate order, preserved for stable
+          -- rendering (FR6) and as half of the natural key.
+          ordinal          INTEGER NOT NULL,
+
+          path             TEXT NOT NULL,
+          relative_path    TEXT,
+          size             INTEGER NOT NULL,
+
+          -- Shown verbatim per candidate (FR6).
+          quality_json         TEXT NOT NULL,
+          languages_json       TEXT NOT NULL DEFAULT '[]',
+          release_group        TEXT,
+          indexer_flags        INTEGER NOT NULL DEFAULT 0,
+          release_type         TEXT,
+          custom_formats_json  TEXT NOT NULL DEFAULT '[]',
+          -- Named by source elsewhere (ADR-12); this column is the instance's
+          -- own reported total, nullable because not every candidate carries one.
+          custom_format_score  INTEGER,
+
+          -- What the file will be imported to. Starts as the instance's own
+          -- resolution; null means the instance could not map it, which is
+          -- what keeps the row un-includable until the operator maps it
+          -- (ADR-4).
+          mapping_json     TEXT,
+          mapping_source   TEXT NOT NULL DEFAULT 'instance'
+                              CHECK (mapping_source IN ('instance','operator')),
+
+          -- The candidate's own rejection reasons, verbatim (FR6) — same
+          -- "reasons are the product" convention as rename/grab.
+          rejections_json  TEXT NOT NULL DEFAULT '[]',
+          -- Set when the destination item already has a file (ADR-8). Drives
+          -- included's default; the operator is shown *why* a row starts
+          -- opted out, not just that it does.
+          replaces_existing_json TEXT,
+
+          -- Inverted in sense from rename_plan_row.excluded: force import
+          -- *includes* rather than excludes (ADR-8, state-import-plan.md).
+          -- Operator-togglable while phase = 'ready'.
+          included         INTEGER NOT NULL DEFAULT 0,
+
+          -- Null until the plan reaches 'applying'; never written
+          -- optimistically — an outcome means history (or a re-read) actually
+          -- confirmed it (ADR-7). The columns live here, not only in the
+          -- operation log, so the review screen can show per-file outcomes
+          -- progressively while 'applying' is still in flight.
+          outcome              TEXT CHECK (outcome IN ('succeeded','failed','unverified')),
+          outcome_destination  TEXT,
+          outcome_error        TEXT,
+
+          PRIMARY KEY (plan_id, ordinal)
+        );
+
+        -- operation.detail stays a flat string[], same as every other kind;
+        -- it is not enough to reconstruct which file went where, which is
+        -- what this table exists for (REQ-OPS-001's force-import extension,
+        -- mirroring rename_file_outcome exactly). Append-only: a row is
+        -- written once, from the read-back, and never revisited.
+        CREATE TABLE import_file_outcome (
+          id               TEXT PRIMARY KEY,
+          operation_id     TEXT NOT NULL REFERENCES operation (id) ON DELETE CASCADE,
+
+          -- The file's prior (source) path, copied at write time rather than
+          -- referenced from the plan — same reason rename_file_outcome
+          -- copies its paths: this must survive the plan being purged.
+          path             TEXT NOT NULL,
+          -- {kind, seriesId/movieId, episodeIds?, label, importedPath} —
+          -- the item this file was mapped to, plus where it actually landed.
+          destination_json TEXT NOT NULL,
+          mapping_source   TEXT NOT NULL CHECK (mapping_source IN ('instance','operator')),
+
+          outcome          TEXT NOT NULL CHECK (outcome IN ('succeeded','failed','unverified')),
+          error            TEXT
+        );
+
+        CREATE INDEX idx_import_file_outcome_operation_id
+          ON import_file_outcome (operation_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database): number {

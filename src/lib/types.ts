@@ -1,3 +1,4 @@
+import type { DecisionCandidate, DecisionTarget } from './decisions';
 /**
  * Types shared between server and client.
  *
@@ -136,6 +137,12 @@ export interface TorrentState {
   eta: number;
   state: string;
   fetchingMetadata: boolean;
+  /**
+   * When the client finished the download, epoch milliseconds. Null while it is
+   * still downloading. The cause taxonomy's five-minute import dwell is measured
+   * on this clock rather than the *arr's (ADR-2).
+   */
+  completionOn: number | null;
 }
 
 /**
@@ -148,6 +155,64 @@ export interface StallVerdict {
   stalled: boolean;
   /** Operator-facing evidence, e.g. `0 peers, no progress`. Empty when not stalled. */
   evidence: string;
+}
+
+/**
+ * The closed taxonomy a queue record's cause is drawn from (REQ-QUEUE-018,
+ * ADR-2). Seven members, no eighth state: `unknown` is a first-class member
+ * rather than an absence, because the absence of evidence is never reported
+ * as `healthy` (FR5).
+ */
+export const QUEUE_CAUSES = [
+  'healthy',
+  'stalled',
+  'importing',
+  'import-rejected',
+  'import-not-performed',
+  'payload-missing',
+  'unknown',
+] as const;
+export type QueueCauseKind = (typeof QUEUE_CAUSES)[number];
+
+/**
+ * `reported` is text the upstream instance produced itself (today, only
+ * `statusMessages` on `import-rejected`); `inferred` is a reading helparr
+ * derived by joining *arr and download-client evidence. REQ-QUEUE-020
+ * requires the two to render distinctly, never in the same style.
+ */
+export type CauseProvenance = 'reported' | 'inferred';
+
+/**
+ * The remedies `classifyCause` can name (REQ-QUEUE-019, design/state-cause.md).
+ * A closed union, not a free string: `wait` is listed where no action exists
+ * so the inspector states that explicitly rather than omitting the group,
+ * and nothing here is offered that helparr cannot actually perform.
+ */
+export const CAUSE_REMEDIES = ['force-import', 'remove-and-blocklist', 'wait'] as const;
+export type CauseRemedy = (typeof CAUSE_REMEDIES)[number];
+
+/**
+ * One line of evidence a cause rests on, named by its source so the operator
+ * can tell helparr's own reading from an upstream channel at a glance
+ * (REQ-QUEUE-020). `helparr` is used only for the taxonomy's own narration —
+ * e.g. explaining why `unknown` had nothing else to go on.
+ */
+export interface CauseEvidence {
+  source: 'sonarr' | 'radarr' | 'qbittorrent' | 'helparr';
+  text: string;
+}
+
+/**
+ * `classifyCause`'s result (ADR-2). Every queue record carries exactly one of
+ * these — there is no "could not classify" case; an unmatched record is
+ * `unknown` with evidence naming what was missing, never defaulted to
+ * `healthy`.
+ */
+export interface QueueCause {
+  kind: QueueCauseKind;
+  provenance: CauseProvenance;
+  evidence: CauseEvidence[];
+  remedies: CauseRemedy[];
 }
 
 export interface QueueRecord {
@@ -180,6 +245,8 @@ export interface QueueRecord {
   estimatedCompletionTime: string | null;
   torrent: TorrentState | null;
   stall: StallVerdict;
+  /** `classifyCause`'s reading of this row (ADR-2, REQ-QUEUE-018..020). */
+  cause: QueueCause;
 }
 
 /**
@@ -461,6 +528,15 @@ export interface ParsedTarget {
   isMultiSeason: boolean;
   /** How many episodes the instance resolved. Never helparr's own count. */
   episodeCount: number;
+  /**
+   * What the decision explainer compares against (FR17, ADR-10): the target's
+   * quality profile, and the first resolved episode (or the movie) with its
+   * file. `fileId` is null when the instance reports no file on disk. For a
+   * season pack only the first episode is compared, the same one the label names.
+   */
+  qualityProfileId: number | null;
+  episodeId: number | null;
+  fileId: number | null;
 }
 
 export interface EvaluatedRelease {
@@ -470,6 +546,13 @@ export interface EvaluatedRelease {
    */
   matched: boolean;
   rejections: string[];
+  /**
+   * The matched release and the item it would replace, so the explainer can
+   * compare the two (FR17). Null when unmatched, or when the instance did not
+   * report a quality profile for the target.
+   */
+  candidate: DecisionCandidate | null;
+  target: DecisionTarget | null;
 }
 
 export interface GrabOutcome {
@@ -569,6 +652,11 @@ export interface Gap {
   title: string;
   airDate: string | null;
   wantedQuality: string | null;
+  /**
+   * The quality profile id behind `wantedQuality` — what the decision explainer
+   * compares a release against (FR17). Null when the instance reported none.
+   */
+  profileId: number | null;
   targetPath: string | null;
   /**
    * Radarr only — its `wanted/missing` records carry `lastSearchTime` inline.

@@ -55,6 +55,7 @@ export default defineConfig({
           '**/gaps-perf.test.ts',
           '**/rename-interaction.test.ts',
           '**/rename-perf.test.ts',
+          '**/triage-interaction.test.ts',
         ]),
       // And for the README's screenshots, which are not a test of anything —
       // they are a generator that happens to need the browser lane's fakes and

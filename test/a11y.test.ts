@@ -50,6 +50,13 @@ import { fakeReleases, startFakeProwlarr, type FakeProwlarr } from './helpers/fa
  * rather than counting it, and that the reference's own closing line — a dialog
  * owns the keyboard until it closes — is true.
  *
+ * T27 of stuck-item-triage / NFR5 extends it to the triage surfaces: the Cause
+ * group and the Comparison beside it in the queue inspector, force import in
+ * all four of its states (the review grid with a replacement row, the typed
+ * confirmation, the applied summary and the drift refusal), the decision
+ * explainer's comparison as Search renders it, and Unmapped folders with one
+ * root an instance listed and one it never reported on.
+ *
  * This drives the real standalone build in a real browser rather than rendering
  * components under jsdom. NFR7's requirements are mostly *rendered* properties
  * — visible `:focus-visible` rings from `--color-ring`, contrast ratios from the
@@ -346,6 +353,208 @@ async function openGrabDialog() {
   await page.waitForSelector('.modal[role="dialog"]');
   await page.click('.dest-chip:has-text("Sonarr")');
   await page.waitForSelector('.modal .grab-target');
+}
+
+/* ── The triage fixture (T27, stuck-item-triage) ────────────────────────── */
+
+/** The torrent hash the rejected record, its candidates and its history share. */
+const TRIAGE_HASH = 'HASH-REJECTED';
+/** The id of the file on disk that the first candidate would replace. */
+const TRIAGE_FILE_ID = 501;
+const TRIAGE_DIR = '/downloads/Reacher.S02.1080p.WEB-DL-NTb';
+const NOT_AN_UPGRADE =
+  'Not an upgrade for existing episode file(s). Existing quality: WEBDL-1080p. New Quality WEBDL-1080p.';
+/** What the typed confirmation asks for: the replacement row starts excluded. */
+const TRIAGE_INCLUDED = 2;
+
+const WEBDL_1080P = {
+  quality: { id: 7, name: 'WEBDL-1080p', source: 'web', resolution: 1080 },
+  revision: { version: 1, real: 0, isRepack: false },
+};
+
+/**
+ * A completed download Sonarr refused to import — `completed` + `warning` +
+ * a status message, which is the import-rejected cause (rule 4). First in the
+ * queue so the inspector can be opened on it without scrolling a 500-row grid.
+ */
+const TRIAGE_REJECTED = {
+  id: 9001,
+  title: 'Reacher.S02.1080p.WEB-DL-NTb',
+  size: 3_000_000_000,
+  sizeleft: 0,
+  protocol: 'torrent',
+  indexer: 'TorrentDay',
+  status: 'completed',
+  trackedDownloadStatus: 'warning',
+  trackedDownloadState: 'importPending',
+  downloadId: TRIAGE_HASH,
+  statusMessages: [{ title: 'Reacher.S02E01.1080p.WEB-DL-NTb.mkv', messages: [NOT_AN_UPGRADE] }],
+  series: { title: 'Reacher' },
+  episodes: [{ seasonNumber: 2, episodeNumber: 1 }],
+};
+
+const TRIAGE_FORMATS = [{ id: 1, name: 'HQ-WEBDL' }, { id: 2, name: 'NTb' }];
+
+/** Profile 3 in full, so the comparison states real thresholds. */
+const TRIAGE_PROFILE = {
+  id: 3,
+  name: 'HD-1080p',
+  upgradeAllowed: true,
+  cutoff: 7,
+  items: [{ quality: { id: 7, name: 'WEBDL-1080p' }, allowed: true }],
+  minFormatScore: 0,
+  cutoffFormatScore: 100,
+  minUpgradeFormatScore: 1,
+  formatItems: [
+    { format: 1, name: 'HQ-WEBDL', score: 100 },
+    { format: 2, name: 'NTb', score: 10 },
+  ],
+};
+
+/** The file on disk the first candidate is compared with. */
+const TRIAGE_EXISTING = {
+  id: TRIAGE_FILE_ID,
+  path: '/tv/Reacher/Season 2/Reacher - S02E01.mkv',
+  relativePath: 'Season 2/Reacher - S02E01.mkv',
+  sceneName: 'Reacher.S02E01.1080p.WEB-DL-HQ',
+  size: 2_100_000_000,
+  quality: WEBDL_1080P,
+  customFormats: [{ id: 1, name: 'HQ-WEBDL' }],
+  customFormatScore: 100,
+  languages: [{ id: 1, name: 'English' }],
+  qualityCutoffNotMet: false,
+};
+
+/**
+ * Three files in the download: one that would replace a file already in the
+ * library (excluded by default, and the one the comparison is about), one
+ * with a rejection the comparison has nothing to say about, and one clean.
+ */
+function triageCandidates(): Array<Record<string, unknown>> {
+  const episode = (n: number, fileId: number | null) => ({
+    id: 200 + n,
+    seasonNumber: 2,
+    episodeNumber: n,
+    title: `Episode ${n}`,
+    hasFile: fileId !== null,
+    episodeFileId: fileId,
+  });
+  const candidate = (n: number, rejections: string[], fileId: number | null) => {
+    const name = `Reacher.S02E${pad(n)}.1080p.WEB-DL-NTb.mkv`;
+    return {
+      path: `${TRIAGE_DIR}/${name}`,
+      relativePath: name,
+      name,
+      size: 1_000_000_000 + n,
+      quality: WEBDL_1080P,
+      languages: [{ id: 1, name: 'English' }],
+      releaseGroup: 'NTb',
+      indexerFlags: 0,
+      releaseType: 'singleEpisode',
+      customFormats: [{ id: 2, name: 'NTb' }],
+      customFormatScore: 10,
+      rejections: rejections.map((reason) => ({ reason, type: 'permanent' })),
+      downloadId: TRIAGE_HASH,
+      series: { id: 1, title: 'Reacher', qualityProfileId: 3 },
+      seasonNumber: 2,
+      episodes: [episode(n, fileId)],
+    };
+  };
+  return [
+    candidate(1, [NOT_AN_UPGRADE], TRIAGE_FILE_ID),
+    candidate(2, ['Sample'], null),
+    candidate(3, [], null),
+  ];
+}
+
+/** Sonarr's reading of every search result: Reacher S02E01, which has a file. */
+const TRIAGE_PARSE = {
+  series: { id: 1, title: 'Reacher', qualityProfileId: 3 },
+  episodes: [{
+    id: 201, seasonNumber: 2, episodeNumber: 1, hasFile: true, episodeFileId: TRIAGE_FILE_ID,
+  }],
+  parsedEpisodeInfo: {
+    quality: { quality: { name: 'WEBDL-1080p' } },
+    releaseGroup: 'GROUP',
+    seasonNumber: 2,
+  },
+};
+
+/**
+ * Sonarr's own search, answering for every release Prowlarr returns (matched
+ * by info hash, then title), each refused for a reason the comparison speaks
+ * to — so whichever row sorts first, the explainer has something to compare.
+ */
+function triageReleaseCandidates(): unknown[] {
+  return [
+    ...fakeReleases(4, 'TorrentDay', 2),
+    ...fakeReleases(4, 'TorrentDay', 1, { guid: 'fl-1', title: 'Show.S02E01.2160p.WEB-DL-GROUP' }),
+    ...fakeReleases(7, 'Nyaa', 2),
+  ].map((release) => ({
+    title: release.title,
+    guid: release.guid,
+    infoHash: release.infoHash,
+    indexer: release.indexer,
+    quality: WEBDL_1080P,
+    customFormats: [{ id: 2, name: 'NTb' }],
+    customFormatScore: 10,
+    rejections: [{ reason: 'Existing file on disk has a equal or higher Custom Format score: 100', type: 'permanent' }],
+    episodes: [{ id: 201 }],
+  }));
+}
+
+/**
+ * One root Sonarr listed folders under and one it said nothing about — the
+ * absent key, which must read as unknown rather than as empty (ADR-9).
+ */
+const TRIAGE_ROOTS = [
+  {
+    id: 1,
+    path: '/tv',
+    accessible: true,
+    freeSpace: 1_200_000_000_000,
+    unmappedFolders: [
+      { name: 'The Expanse', path: '/tv/The Expanse', relativePath: 'The Expanse' },
+      { name: 'Dark (2017)', path: '/tv/Dark (2017)', relativePath: 'Dark (2017)' },
+    ],
+  },
+  { id: 2, path: '/anime', accessible: true, freeSpace: 800_000_000_000 },
+];
+
+/** The Overview, narrowed to the rejected record, with its inspector open. */
+async function openTriageInspector() {
+  await openOverview();
+  await page.fill('#list-search', 'Reacher');
+  await page.click('.qgrid__body-row:has-text("Reacher.S02")');
+  await page.waitForSelector('.inspector');
+  await page.waitForSelector('.inspector :text("Cause")');
+}
+
+/**
+ * The force-import link as the inspector renders it. Read off the page rather
+ * than rebuilt here: `seedInstance` does not return the instance id, and the
+ * link the operator follows is the one under test.
+ */
+async function forceImportHref(): Promise<string> {
+  await openTriageInspector();
+  const href = await page.getAttribute('.inspector a:has-text("Force import")', 'href');
+  expect(href, 'the inspector offered no Force import link').toBeTruthy();
+  return href as string;
+}
+
+/** A fresh preview of the rejected download, built and settled. */
+async function openForceImport() {
+  const href = await forceImportHref();
+  await page.goto(new URL(href, ORIGIN).toString());
+  await page.waitForSelector('.ribbon--preview', { timeout: 30_000 });
+  await expect.poll(() => page.textContent('.bulkbar--apply .bulkbar__count'), { timeout: 30_000 })
+    .toContain(`${TRIAGE_INCLUDED} included`);
+}
+
+/** Preview → typed confirmation. Opens it; types nothing. */
+async function openImportConfirm() {
+  await page.click('.bulkbar--apply .btn-danger-solid');
+  await page.waitForSelector('#import-typed-count');
 }
 
 // Each scan boots axe into the page and walks the whole tree; the suite-wide
@@ -1328,6 +1537,155 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
       await page.keyboard.press('j');
       await page.waitForTimeout(200);
       expect(await page.getAttribute('.qgrid__body-row.is-cursor', 'aria-rowindex')).not.toBe(before);
+    });
+  });
+  /* ---------------------------------------------------------------------
+     T27 (stuck-item-triage) — the triage surfaces. Every one of them exists
+     only when something is wrong — a refused import, a library that moved
+     under a preview, a root the instance never described — which is exactly
+     the class of surface that escapes review, so each is driven into its
+     state rather than scanned at rest.
+     --------------------------------------------------------------------- */
+
+  describe('Stuck-item triage', () => {
+    beforeAll(() => {
+      sonarr.setQueue([TRIAGE_REJECTED, ...fakeQueue(QUEUE_SIZE)]);
+      sonarr.setProfiles([TRIAGE_PROFILE]);
+      sonarr.setCustomFormats(TRIAGE_FORMATS);
+      sonarr.setExistingFile(TRIAGE_FILE_ID, TRIAGE_EXISTING);
+      sonarr.setImportCandidates(triageCandidates());
+      sonarr.setImportHook(null);
+      sonarr.setParse(TRIAGE_PARSE);
+      sonarr.setCandidates(triageReleaseCandidates());
+      sonarr.setRootFolders(TRIAGE_ROOTS);
+    });
+
+    afterAll(() => {
+      // Back to what the suite's own beforeAll installed, so a describe added
+      // after this one starts from the same fixture every earlier test saw.
+      sonarr.setQueue(fakeQueue(QUEUE_SIZE));
+      sonarr.setProfiles([{ id: 3, name: 'HD-1080p' }]);
+      sonarr.setParse(parsedSeries());
+      sonarr.setCandidates([]);
+      sonarr.setImportCandidates([]);
+      sonarr.setImportHook(null);
+      sonarr.setRootFolders([]);
+    });
+
+    it('Overview has zero violations with the inspector on an import-rejected record, before and after the comparison', async () => {
+      await openTriageInspector();
+      await scan('Overview (Cause group)');
+
+      await page.click('.inspector button:has-text("Compare with the files on disk")');
+      await page.waitForSelector(
+        '.inspector section[aria-label="Rejected files compared with the files on disk"] :text("Candidate vs. on disk")',
+        { timeout: 30_000 },
+      );
+      await page.waitForSelector('.inspector :text("Verdict")');
+      await scan('Overview (Cause group and Comparison)');
+    });
+
+    it('Force import has zero violations on the review grid, with a replacement row', async () => {
+      await openForceImport();
+      // The replacement row is excluded by default and announced above the
+      // grid — the warning is the surface, so it is waited on, not assumed.
+      await page.waitForSelector('text=would replace a file');
+      await page.waitForSelector('table[role="grid"]');
+      await scan('Force import (review)');
+    });
+
+    it('Force import has zero violations in the typed confirmation, in all three states', async () => {
+      await openForceImport();
+      await openImportConfirm();
+      await scan('Force import confirmation (untouched)');
+
+      await page.fill('#import-typed-count', String(TRIAGE_INCLUDED + 5));
+      await expect.poll(() => page.getAttribute('#import-typed-count', 'aria-invalid')).toBe('true');
+      expect(await page.isDisabled('.modal__foot .btn-danger-solid')).toBe(true);
+      await scan('Force import confirmation (mismatched count)');
+
+      await page.fill('#import-typed-count', String(TRIAGE_INCLUDED));
+      await expect.poll(() => page.isDisabled('.modal__foot .btn-danger-solid')).toBe(false);
+      await scan('Force import confirmation (matching count)');
+
+      await page.keyboard.press('Escape');
+      await expect.poll(() => page.locator('#import-typed-count').count()).toBe(0);
+    });
+
+    it('Force import has zero violations on the drift refusal', async () => {
+      await openForceImport();
+      // The download changes between the preview and the confirm: the clean
+      // episode is gone from the instance's candidate set, which the apply's
+      // re-read has to notice and name.
+      sonarr.setImportCandidates(triageCandidates().filter((c) => !String(c.path).includes('E03')));
+      try {
+        await openImportConfirm();
+        await page.fill('#import-typed-count', String(TRIAGE_INCLUDED));
+        await page.click('.modal__foot .btn-danger-solid');
+
+        await page.waitForSelector('.ribbon--refused', { timeout: 30_000 });
+        await page.waitForSelector('.refusal__paths li');
+        await page.waitForSelector('.refusal__foot button:has-text("Rebuild preview")');
+        await scan('Force import (refused on drift)');
+      } finally {
+        sonarr.setImportCandidates(triageCandidates());
+      }
+    });
+
+    it('Force import has zero violations on the applied summary', async () => {
+      await openForceImport();
+      // Every file sent lands: the fake drops it from the candidate set and
+      // writes the history event the verification reads back.
+      sonarr.setImportHook((files) => ({
+        succeeded: Object.fromEntries(files.map((file) => [
+          String(file.path),
+          `/tv/Reacher/Season 2/${String(file.path).split('/').at(-1)}`,
+        ])),
+      }));
+      try {
+        await openImportConfirm();
+        await page.fill('#import-typed-count', String(TRIAGE_INCLUDED));
+        await page.click('.modal__foot .btn-danger-solid');
+
+        await page.waitForSelector('.ribbon--done', { timeout: 30_000 });
+        expect(await page.textContent('.ribbon--done')).toContain(`${TRIAGE_INCLUDED} of ${TRIAGE_INCLUDED} imported`);
+        await page.waitForSelector('table[aria-label="Files sent and what each one did"]');
+        await scan('Force import (done)');
+      } finally {
+        sonarr.setImportHook(null);
+        sonarr.setImportCandidates(triageCandidates());
+      }
+    });
+
+    it('Indexer Search has zero violations with the decision explainer\'s comparison open', async () => {
+      await openSearch();
+      await runSearch();
+      await page.click('.rgrid__body-row >> nth=0');
+      await page.waitForSelector('.inspector #evaluate-target');
+      // Radarr is still answering 401, so the target is chosen, not defaulted.
+      await page.selectOption('#evaluate-target', { label: 'Sonarr' });
+      await page.click('.evaluate-row button:has-text("Evaluate")');
+
+      await page.waitForSelector('.inspector button:has-text("Compare with file on disk")', { timeout: 30_000 });
+      await scan('Search (explainer, reasons)');
+
+      await page.click('.inspector button:has-text("Compare with file on disk")');
+      await page.waitForSelector(
+        '.inspector section[aria-label="Candidate compared with the file on disk"] :text("Verdict")',
+        { timeout: 30_000 },
+      );
+      await scan('Search (explainer, comparison)');
+    });
+
+    it('Unmapped folders has zero violations with one listed root and one unknown root', async () => {
+      await page.goto(`${ORIGIN}/unmapped`);
+      await page.waitForSelector('.badge.badge-warn:has-text("unknown")', { timeout: 30_000 });
+      await page.waitForSelector('[role="grid"] .ggrid__body-row');
+      await scan('Unmapped (listed and unknown)');
+
+      // Unknown is stated in words, never only by the badge's tone: the one
+      // state that must not read as "empty" (REQ-GAPS-023).
+      expect(await page.textContent('main')).toContain('unknown');
     });
   });
 });

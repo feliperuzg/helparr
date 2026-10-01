@@ -20,6 +20,7 @@ type Row = [keys: string[], description: string];
 const EVERYWHERE: Row[] = [
   [['?'], 'Open this reference'],
   [['1', '…', '6'], 'Jump to Overview … Settings'],
+  [['7'], 'Jump to Unmapped'],
   [['Esc'], 'Close the closest open thing — a panel, a dialog, a selection'],
 ];
 
@@ -30,7 +31,7 @@ const LISTS: Row[] = [
   [['Home', 'End'], 'Jump to the first / last row'],
   [['PgUp', 'PgDn'], 'Move ten rows at once'],
   [['Space'], 'Toggle the row under the cursor *'],
-  [['Enter'], 'Open the row — inspector or detail'],
+  [['Enter'], 'Open the row — inspector or detail; on Unmapped, its indexer search'],
   [['Esc'], 'Close the open inspector'],
 ];
 
@@ -51,15 +52,15 @@ export default function ShortcutsDialog({ onClose }: { onClose: () => void }) {
         {/* Two sections rather than one flat list. Overview's queue table and
             Settings' instance cards do not use the list keyboard layer, so they
             are correctly absent here rather than padded in for symmetry. */}
-        <Section title="Any list screen (Overview, Search, Gaps, Rename)" rows={LISTS} />
+        <Section title="Any list screen (Overview, Search, Gaps, Rename, Unmapped)" rows={LISTS} />
 
         {/* The asterisk is load-bearing. The bindings are consistent across
             every list screen with exactly one exception, and a reference that
             hid it to look more consistent than the app is would be lying about
             the only thing an operator could get caught by. */}
         <p className="shortcuts__note subtle">
-          * Search has no bulk selection — <kbd className="kbd">Space</kbd> scrolls there
-          instead, the same as on any page.
+          * Search and Unmapped have no bulk selection — <kbd className="kbd">Space</kbd>
+          scrolls there instead, the same as on any page.
         </p>
         <p className="shortcuts__note subtle">
           All of the above is suppressed while a dialog is open — the dialog owns the

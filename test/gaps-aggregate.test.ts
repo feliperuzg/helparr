@@ -59,6 +59,7 @@ function gap(over: Partial<Gap> = {}): Gap {
     title: 'Episode 2',
     airDate: '2025-01-01T00:00:00Z',
     wantedQuality: 'HD-1080p',
+    profileId: 1,
     targetPath: '/tv/Reacher',
     lastSearchAt: null,
     inferred: null,

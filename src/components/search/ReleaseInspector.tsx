@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 
 import Icon from '@/components/Icon';
+import DecisionExplainer from '@/components/decisions/DecisionExplainer';
+import type { DecisionCandidate, DecisionTarget } from '@/lib/decisions';
 import MonoValue from '@/components/search/MonoValue';
 import { useEvaluateRelease } from '@/components/search/useSearch';
 import { Callout, Inspector, InspectorGroup, KV } from '@/components/ui';
@@ -106,10 +108,14 @@ export default function ReleaseInspector({
               : 'The evaluation did not complete.'}
           </Callout>
         ) : evaluate.data ? (
-          <Verdict
+          <EvaluatedVerdict
+            key={`${release.guid}:${chosen?.instanceId ?? ''}`}
+            instanceId={chosen?.instanceId ?? ''}
             instanceLabel={chosen?.label ?? 'the instance'}
             matched={evaluate.data.matched}
             rejections={evaluate.data.rejections}
+            candidate={evaluate.data.candidate}
+            target={evaluate.data.target}
           />
         ) : (
           <p className="subtle" style={{ fontSize: 'var(--text-sm)' }}>
@@ -162,14 +168,32 @@ export default function ReleaseInspector({
   );
 }
 
-function Verdict({
+/**
+ * What the instance said about this release. The verbatim reasons and the
+ * comparison beside them are `DecisionExplainer`'s (T18, ADR-14) — the same
+ * panel Queue and Gaps render (REQ-DEC-006). Only the "not returned" case and
+ * the grab note are Search's own.
+ *
+ * `/api/search/evaluate` returns the instance's own release record and the
+ * item it would land on, read from the same `/parse` the grab uses (FR17).
+ * The target is null only when the instance reported no quality profile for
+ * it; the explainer then prints the reasons and names what is missing rather
+ * than comparing against invented thresholds (REQ-DEC-008).
+ */
+function EvaluatedVerdict({
+  instanceId,
   instanceLabel,
   matched,
   rejections,
+  candidate,
+  target,
 }: {
+  instanceId: string;
   instanceLabel: string;
   matched: boolean;
   rejections: string[];
+  candidate: DecisionCandidate | null;
+  target: DecisionTarget | null;
 }) {
   if (!matched) {
     return (
@@ -180,27 +204,21 @@ function Verdict({
     );
   }
 
-  if (rejections.length === 0) {
-    return (
-      <Callout tone="ok">
-        {instanceLabel} would accept this release — its decision engine raised no objection.
-      </Callout>
-    );
-  }
-
   return (
     <>
-      <Callout tone="warn">
-        Rejected by {instanceLabel} — {rejections.length} reason{rejections.length === 1 ? '' : 's'}.
-      </Callout>
-      {/* Verbatim, one per line, unabridged. Summarising here would delete the
-          one sentence that tells the operator what to change (REQ-SEARCH-006). */}
-      <ul className="msg-list" style={{ marginTop: 'var(--space-3)' }}>
-        {rejections.map((reason, i) => <li key={`${i}-${reason}`}>{reason}</li>)}
-      </ul>
-      <p className="subtle" style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-3)' }}>
-        This does not block the grab. helparr reports the decision engine; it does not enforce it.
-      </p>
+      <DecisionExplainer
+        instanceId={instanceId}
+        instanceLabel={instanceLabel}
+        candidate={candidate}
+        target={target}
+        rejections={rejections}
+        unavailable={`${instanceLabel} did not report a quality profile for the item this release would replace.`}
+      />
+      {rejections.length > 0 ? (
+        <p className="subtle" style={{ fontSize: 'var(--text-xs)', marginTop: 'var(--space-3)' }}>
+          This does not block the grab. helparr reports the decision engine; it does not enforce it.
+        </p>
+      ) : null}
     </>
   );
 }

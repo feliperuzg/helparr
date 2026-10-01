@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import Icon from '@/components/Icon';
+import TypedCountGate, { useTypedCountGate } from '@/components/TypedCountGate';
 import { warningCount, warningKinds, WARNING_COPY } from '@/components/rename/planView';
 import { Callout, Modal } from '@/components/ui';
 import type { RenamePlanRow } from '@/lib/types';
@@ -39,15 +40,12 @@ export interface ConfirmApplyDialogProps {
 export default function ConfirmApplyDialog({
   rows, affectedFiles, busy, onCancel, onConfirm,
 }: ConfirmApplyDialogProps) {
-  // Frozen at open: a `useState` initializer runs once for the life of the
-  // component and is never recomputed, so the poll that fires a second later
-  // cannot move the target out from under a half-typed number. The dialog is
-  // mounted only while it is open, so "once" and "at open" are the same moment.
-  const [expected] = useState(affectedFiles);
-  const [typed, setTyped] = useState('');
-
-  const matches = typed.trim() === String(expected);
-  const touched = typed.trim() !== '';
+  // Frozen at open: the gate captures the count on first render and never
+  // recomputes it, so the poll that fires a second later cannot move the
+  // target out from under a half-typed number. The dialog is mounted only
+  // while it is open, so "once" and "at open" are the same moment.
+  const gate = useTypedCountGate(affectedFiles);
+  const { expected, matches } = gate;
 
   const flagged = useMemo(() => warningCount(rows), [rows]);
   const kinds = useMemo(() => warningKinds(rows), [rows]);
@@ -145,36 +143,15 @@ export default function ConfirmApplyDialog({
         </Callout>
       ) : null}
 
-      <div className="confirm-gate">
-        <label className="confirm-gate__label" htmlFor="rename-typed-count">
-          Type <strong className="mono">{expected}</strong> to confirm you have read the plan
-        </label>
-        <input
-          id="rename-typed-count"
-          className="input mono confirm-gate__input"
-          type="text"
-          inputMode="numeric"
-          autoComplete="off"
-          value={typed}
-          onChange={(event) => setTyped(event.target.value)}
-          disabled={busy}
-          aria-describedby="rename-typed-hint"
-          aria-invalid={touched && !matches}
-        />
-        {/* Three states, and none of them mentions a way to skip this step —
-            there is none to mention (ADR-8). */}
-        <p
-          id="rename-typed-hint"
-          className={`confirm-gate__hint${touched && !matches ? ' is-wrong' : ''}`}
-          role="status"
-        >
-          {!touched
-            ? `Nothing is sent until this field reads ${expected}.`
-            : matches
-              ? 'Matches. The button below will rename these files.'
-              : `That is not ${expected}. The rename stays disabled until it matches.`}
-        </p>
-      </div>
+      <TypedCountGate
+        gate={gate}
+        inputId="rename-typed-count"
+        hintId="rename-typed-hint"
+        purpose="to confirm you have read the plan"
+        action="rename"
+        matchedMessage="Matches. The button below will rename these files."
+        disabled={busy}
+      />
     </Modal>
   );
 }
