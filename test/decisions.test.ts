@@ -183,7 +183,7 @@ describe('decisions', () => {
       const dto = register('sonarr', 'Sonarr', sonarr, 'sonarr-key');
 
       for (let i = 0; i < 20; i++) {
-        // eslint-disable-next-line no-await-in-loop -- sequential opens are the point
+        // Sequential on purpose: twenty opens in a row, as an operator would.
         const result = await getDecisionsConfig(dto.id);
         expect(result.ok).toBe(true);
       }
