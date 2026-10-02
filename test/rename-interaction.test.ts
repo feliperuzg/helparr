@@ -278,6 +278,50 @@ describe('rename interaction', { timeout: 180_000 }, () => {
     expect(renameCommands()[0].body.files).toEqual([11, 13]);
   });
 
+  /* ── Range selection (queue-triage-ergonomics AC9, AC13) ──────────────── */
+
+  it('ranges titles in the picker with shift+click, still sending nothing', async () => {
+    await page.goto(`${app.origin}/rename`);
+    await page.waitForSelector('.scope__item', { timeout: 30_000 });
+    const labels = await page.locator('.scope__label').allTextContents();
+    expect(labels).toHaveLength(2);
+    const box = (n: number) => page.locator('.scope__item').nth(n).locator('input[type="checkbox"]');
+
+    await box(0).click();
+    await box(1).click({ modifiers: ['Shift'] });
+    expect(await box(0).isChecked()).toBe(true);
+    expect(await box(1).isChecked()).toBe(true);
+    expect(await page.textContent('.scope__foot button')).toContain('2 titles');
+    expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+
+    expect(sonarr.commands).toEqual([]);
+    expect(radarr.commands).toEqual([]);
+  });
+
+  it('excludes a shift+click range in one edit, and the command carries exactly the rest', async () => {
+    await buildPlan();
+
+    await page.click('input[aria-label="Include reacher.s01e01.mkv in this plan"]');
+    await expect.poll(() => page.textContent('.bulkbar__count'), { timeout: 10_000 })
+      .toContain('2 files will be renamed');
+
+    // The anchor is excluded, so the range takes that state: S01E02 goes too.
+    await page.click('input[aria-label="Include reacher.s01e02.mkv in this plan"]', { modifiers: ['Shift'] });
+    await expect.poll(() => page.textContent('.bulkbar__count'), { timeout: 10_000 })
+      .toContain('1 file will be renamed');
+    await expect.poll(() => page.locator('main [role="status"]').filter({ hasText: 'selected' }).textContent())
+      .toContain('1 file selected');
+    expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+    expect(renameCommands()).toHaveLength(0);
+
+    await openConfirm();
+    expect(await hint()).toContain('Nothing is sent until this field reads 1');
+    await page.fill('#rename-typed-count', '1');
+    await page.click('.modal__foot .btn-danger-solid');
+    await expect.poll(() => renameCommands().length, { timeout: 30_000 }).toBe(1);
+    expect(renameCommands()[0].body.files).toEqual([13]);
+  });
+
   /* ── Apply (FR10, FR13) ─────────────────────────────────────────────────── */
 
   it('renames only on the confirmed click, and reports each file once it lands', async () => {

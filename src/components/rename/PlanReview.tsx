@@ -38,6 +38,8 @@ export interface PlanReviewProps {
   onOpen: (index: number) => void;
   openRowId: string | null;
   onSetExcluded: (rowIds: string[], excluded: boolean) => void;
+  /** A row checkbox, with Shift — see `PlanGrid`'s `onToggleRow`. */
+  onToggleRow?: (id: string, shift: boolean) => void;
   onApply: () => void;
   onRegenerate: () => void;
   excluding: boolean;
@@ -46,7 +48,7 @@ export interface PlanReviewProps {
 
 export default function PlanReview({
   plan, cursor, onCursorChange, onOpen, openRowId,
-  onSetExcluded, onApply, onRegenerate, excluding, applying,
+  onSetExcluded, onToggleRow, onApply, onRegenerate, excluding, applying,
 }: PlanReviewProps) {
   const now = useNow(true);
   const left = millisLeft(plan, now);
@@ -172,6 +174,7 @@ export default function PlanReview({
               onOpen={onOpen}
               openRowId={openRowId}
               onSetExcluded={onSetExcluded}
+              onToggleRow={onToggleRow}
               busy={excluding}
             />
           )}

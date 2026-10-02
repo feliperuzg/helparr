@@ -37,9 +37,15 @@ export interface GapInspectorProps {
   onAttach: () => void;
   /** Opens the search confirmation for this one gap. */
   onSearch: () => void;
+  /** Whether the panel is at its expanded width (REQ-QUEUE-011). */
+  expanded?: boolean;
+  /** Supplying this renders the expand control in the panel head. */
+  onToggleExpand?: () => void;
 }
 
-export default function GapInspector({ gap, onClose, onAttach, onSearch }: GapInspectorProps) {
+export default function GapInspector({
+  gap, onClose, onAttach, onSearch, expanded = false, onToggleExpand,
+}: GapInspectorProps) {
   // Keyed on the item, so moving down the grid with j/k cannot leave the
   // previous episode's history under the current episode's title.
   const history = useGapHistory({
@@ -59,6 +65,8 @@ export default function GapInspector({ gap, onClose, onAttach, onSearch }: GapIn
       eyebrow={`${gap.instanceLabel} · ${gap.kind}`}
       title={`${gap.groupTitle} — ${gap.itemCode}`}
       onClose={onClose}
+      expanded={expanded}
+      onToggleExpand={onToggleExpand}
       footer={
         <>
           <button type="button" className="btn btn-outline btn-sm" onClick={onSearch}>

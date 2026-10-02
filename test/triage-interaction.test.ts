@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request } from 'playwright';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { login, seedInstance, startApp, type AppServer } from './helpers/appServer';
@@ -162,6 +162,25 @@ const CAND_REPLACE = candidate(`${DIR}/Reacher.S01E04.1080p.WEB-DL-GROUP.mkv`, {
 const CAND_LATE = candidate(`${DIR}/Reacher.S01E05.1080p.WEB-DL-GROUP.mkv`, { id: 15, number: 5 });
 
 const IMPORT_SET = [CAND_A, CAND_B, CAND_REPLACE];
+
+/** No episode resolved — no target, so it starts excluded and a bulk include skips it. */
+const CAND_UNMAPPED = candidate(`${DIR}/Reacher.S01.Extras.1080p.WEB-DL-GROUP.mkv`, { id: 0, number: 0 }, {
+  episodes: [],
+});
+
+/**
+ * A season pack where 51 of 53 files would replace one already on disk — the
+ * shape that made "include them one by one" the bug (queue-triage-ergonomics AC4).
+ */
+const PACK_FRESH = [CAND_A, CAND_B];
+const PACK_REPLACEMENTS = Array.from({ length: 51 }, (_, i) => {
+  const number = i + 4;
+  const code = `S01E${String(number).padStart(2, '0')}`;
+  return candidate(`${DIR}/Reacher.${code}.1080p.WEB-DL-GROUP.mkv`, {
+    id: 100 + number, number, hasFile: true, fileId: 600 + number,
+  });
+});
+const PACK = [...PACK_FRESH, ...PACK_REPLACEMENTS];
 
 /** The one the queue explainer compares: rejected, and its episode has the file on disk. */
 const QUEUE_EXPLAIN_CANDIDATE = candidate(`${DIR}/Reacher.S01E01.1080p.WEB-DL-GROUP.mkv`, {
@@ -526,6 +545,123 @@ describe('stuck-item triage interaction', { timeout: 90_000 }, () => {
     await page.click('.refusal button:has-text("Rebuild preview")');
     await expect.poll(() => page.locator('table[role="grid"] tbody tr').count(), { timeout: 20_000 })
       .toBe(IMPORT_SET.length + 1);
+    expect(manualImports()).toHaveLength(0);
+  });
+
+  /* ── Bulk inclusion (queue-triage-ergonomics AC4–AC7, AC9) ─────────────── */
+
+  const bulkGroup = () => page.locator('[role="group"][aria-label="Bulk actions"]');
+  const included = () => page.locator('.bulkbar__count').textContent();
+
+  it('includes 51 replacements in one action, and the gate then asks for 53', async () => {
+    sonarr.setImportCandidates(PACK);
+    sonarr.setImportHook((files) => ({
+      succeeded: Object.fromEntries(files.map((file) => [
+        file.path as string,
+        `/tv/Reacher/Season 01/${(file.path as string).split('/').pop() as string}`,
+      ])),
+    }));
+
+    await openForceImport();
+    expect(await page.locator('table[role="grid"] tbody tr').count()).toBe(PACK.length);
+    expect(await included()).toBe('2 included');
+
+    const button = bulkGroup().locator('button', { hasText: 'Include all replacements' });
+    expect(await button.textContent()).toBe('Include all replacements (51)');
+
+    let patches = 0;
+    const countPatch = (request: Request) => {
+      if (request.method() === 'PATCH' && request.url().includes('/api/import/plan/')) patches += 1;
+    };
+    page.on('request', countPatch);
+    await button.click();
+    await expect.poll(included, { timeout: 10_000 }).toBe('53 included');
+    page.off('request', countPatch);
+    // One action, one edit: not 51 row PATCHes behind a single button.
+    expect(patches).toBe(1);
+    expect(await page.locator('.bulk-include__outcome').textContent()).toContain('Included 51 files.');
+    expect(await button.textContent()).toBe('Include all replacements (0)');
+    // A bulk edit is a plan edit, not an import.
+    expect(manualImports()).toHaveLength(0);
+
+    await page.click('.bulkbar--apply button:has-text("Import 53 files")');
+    const dialog = page.locator('.modal[role="dialog"]');
+    await dialog.waitFor();
+    expect(await page.locator('#import-typed-hint').textContent()).toBe('Nothing is sent until this field reads 53.');
+    await page.fill('#import-typed-count', '2');
+    expect(await dialog.locator('.btn-danger-solid').isDisabled()).toBe(true);
+    expect(manualImports()).toHaveLength(0);
+
+    await page.fill('#import-typed-count', '53');
+    expect(manualImports()).toHaveLength(0);
+    await dialog.locator('.btn-danger-solid').click();
+
+    await expect.poll(() => manualImports().length, { timeout: 20_000 }).toBe(1);
+    expect((manualImports()[0].body.files as unknown[]).length).toBe(53);
+    await expect.poll(
+      () => page.locator('.ribbon__title').first().textContent(),
+      { timeout: 30_000 },
+    ).toBe('IMPORT COMPLETE — this is an applied result, not a preview');
+  });
+
+  it('skips an unmapped file on Include all and says how many and why', async () => {
+    sonarr.setImportCandidates([...IMPORT_SET, CAND_UNMAPPED]);
+    await openForceImport();
+    expect(await included()).toBe('2 included');
+
+    await bulkGroup().locator('button', { hasText: /^Include all$/ }).click();
+    await expect.poll(included, { timeout: 10_000 }).toBe('3 included');
+    expect(await page.locator('.bulk-include__outcome').textContent())
+      .toContain('Included 1 · skipped 1 — no target');
+    expect(await gridRow(CAND_UNMAPPED.path as string).locator('input[type="checkbox"]').isChecked()).toBe(false);
+    await expect.poll(() => page.locator('main [role="status"]').filter({ hasText: 'now included' }).textContent())
+      .toContain('3 of 4 files now included');
+    expect(manualImports()).toHaveLength(0);
+  });
+
+  it('leaves every row as it was when a bulk edit fails', async () => {
+    await openForceImport();
+    const states = () => Promise.all(IMPORT_SET.map((c) => gridRow(c.path as string).locator('input[type="checkbox"]').isChecked()));
+    const before = await states();
+    expect(before).toEqual([true, true, false]);
+
+    await page.route('**/api/import/plan/*', (route) => (
+      route.request().method() === 'PATCH' ? route.abort('failed') : route.continue()
+    ));
+    try {
+      await bulkGroup().locator('button', { hasText: 'Exclude all' }).click();
+      await expect.poll(() => page.locator('.bulk-include__outcome').textContent(), { timeout: 10_000 })
+        .toContain('Nothing changed');
+      expect(await states()).toEqual(before);
+      expect(await included()).toBe('2 included');
+    } finally {
+      await page.unroute('**/api/import/plan/*');
+    }
+
+    // And the server agrees: a reload reads the same plan.
+    await page.reload();
+    await expect.poll(() => page.locator('table[role="grid"] tbody tr').count(), { timeout: 20_000 })
+      .toBe(IMPORT_SET.length);
+    expect(await states()).toEqual(before);
+    expect(manualImports()).toHaveLength(0);
+  });
+
+  it('includes a shift+click range in one edit, replacements and all', async () => {
+    await openForceImport();
+    await bulkGroup().locator('button', { hasText: 'Exclude all' }).click();
+    await expect.poll(included, { timeout: 10_000 }).toBe('0 included');
+
+    const box = (c: Record<string, unknown>) => gridRow(c.path as string).locator('input[type="checkbox"]');
+    await box(CAND_A).click();
+    await expect.poll(included, { timeout: 10_000 }).toBe('1 included');
+
+    await box(CAND_REPLACE).click({ modifiers: ['Shift'] });
+    await expect.poll(included, { timeout: 10_000 }).toBe('3 included');
+    expect(await box(CAND_B).isChecked()).toBe(true);
+    expect(await box(CAND_REPLACE).isChecked()).toBe(true);
+    expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+    // The click left focus off the checkbox, so the list keys still work.
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('INPUT');
     expect(manualImports()).toHaveLength(0);
   });
 

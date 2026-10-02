@@ -57,6 +57,10 @@ export interface QueueInspectorProps {
   /** Opens the removal preview with the remove-and-blocklist remedy's flags
    *  pre-set. Offered only when the cause names that remedy. */
   onRemoveAndBlocklist: () => void;
+  /** Whether the panel is at its expanded width (ADR-1). */
+  expanded?: boolean;
+  /** Supplying this renders the head's expand toggle. */
+  onToggleExpand?: () => void;
 }
 
 export default function QueueInspector({
@@ -64,6 +68,8 @@ export default function QueueInspector({
   onClose,
   onRemove,
   onRemoveAndBlocklist,
+  expanded,
+  onToggleExpand,
 }: QueueInspectorProps) {
   const progress = progressOf(record);
   const disagreement = stallDisagreement(record);
@@ -75,6 +81,8 @@ export default function QueueInspector({
       eyebrow={`${record.instanceLabel} · ${record.protocol}`}
       title={record.title}
       onClose={onClose}
+      expanded={expanded}
+      onToggleExpand={onToggleExpand}
       footer={
         <>
           {/* The recommended action first, matching the remedy order above. The

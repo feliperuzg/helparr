@@ -107,11 +107,18 @@ export interface PlanGridProps {
   openRowId: string | null;
   /** Only supplied while the plan can still be edited (`preview`). */
   onSetExcluded?: (rowIds: string[], excluded: boolean) => void;
+  /**
+   * A row's own checkbox, with whether Shift was held (REQ-QUEUE-024). When
+   * supplied it replaces the single-row `onSetExcluded` call, so the screen can
+   * keep the range anchor and turn a shift+click into one batched exclusion.
+   */
+  onToggleRow?: (id: string, shift: boolean) => void;
   busy?: boolean;
 }
 
 export default function PlanGrid({
-  rows, mode, cursor, onCursorChange, onOpen, openRowId, onSetExcluded, busy = false,
+  rows, mode, cursor, onCursorChange, onOpen, openRowId, onSetExcluded, onToggleRow,
+  busy = false,
 }: PlanGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const touch = useMediaMatch(TOUCH_QUERY);
@@ -264,6 +271,7 @@ export default function PlanGrid({
                 onCursorChange={onCursorChange}
                 onOpen={onOpen}
                 onSetExcluded={editable ? onSetExcluded : undefined}
+                onToggleRow={editable ? onToggleRow : undefined}
               />
             );
           })}
@@ -339,11 +347,12 @@ interface RowProps {
   onCursorChange: (index: number) => void;
   onOpen: (index: number) => void;
   onSetExcluded?: (rowIds: string[], excluded: boolean) => void;
+  onToggleRow?: (id: string, shift: boolean) => void;
 }
 
 function Row({
   row, mode, flatIndex, renderIndex, offset, isCursor, isOpen, editable,
-  onCursorChange, onOpen, onSetExcluded,
+  onCursorChange, onOpen, onSetExcluded, onToggleRow,
 }: RowProps) {
   const ref = useRef<HTMLDivElement>(null);
   const status = rowStatus(row, mode);
@@ -382,7 +391,13 @@ function Row({
             type="checkbox"
             className="checkbox"
             checked={!row.excluded}
-            onChange={() => onSetExcluded([row.id], !row.excluded)}
+            // No text selection on shift+click, and no focus on the input —
+            // a focused input counts as typing, which would silence j/k.
+            onMouseDown={(e) => e.preventDefault()}
+            onChange={(e) => {
+              if (onToggleRow) onToggleRow(row.id, (e.nativeEvent as MouseEvent).shiftKey);
+              else onSetExcluded([row.id], !row.excluded);
+            }}
             aria-label={`Include ${row.existingPath} in this plan`}
             tabIndex={-1}
           />

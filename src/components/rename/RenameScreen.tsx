@@ -13,12 +13,17 @@ import {
   useApplyRenamePlan, useCreateRenamePlan, useRenameExclusion, useRenamePlan,
 } from '@/components/rename/useRename';
 import type { GridMode } from '@/components/rename/planView';
-import { useListKeyboard } from '@/components/useListKeyboard';
+import { SelectionAnnouncer, selectionSentence, useAnnouncer } from '@/components/SelectionAnnouncer';
+import { useInspectorExpanded } from '@/components/useInspectorExpanded';
+import { useInspectorFollowsCursor, useListKeyboard } from '@/components/useListKeyboard';
 import {
   Callout, KeyboardHints, ScreenHead, ToastStack, useToasts,
 } from '@/components/ui';
 import { ApiError } from '@/lib/api';
-import type { RenamePlanPhase, RenameScopeEntry, RenameTitleOption } from '@/lib/types';
+import { planExtend, planRange, type RangePlan } from '@/lib/rangeSelection';
+import type {
+  RenamePlanDto, RenamePlanPhase, RenameScopeEntry, RenameTitleOption,
+} from '@/lib/types';
 
 /**
  * The bulk-rename screen (T10–T15; FR1–FR13, NFR2, NFR3).
@@ -45,7 +50,9 @@ const HINTS: Array<[string[], string]> = [
   [['/'], 'filter'],
   [['j', 'k'], 'move'],
   [['space'], 'include / exclude'],
+  [['shift', 'j', 'k'], 'extend'],
   [['enter'], 'inspect'],
+  [['e'], 'expand'],
   [['esc'], 'close'],
   [['?'], 'all shortcuts'],
 ];
@@ -79,6 +86,14 @@ export default function RenameScreen() {
   const [planId, setPlanId] = useState<string | null>(null);
   const [openRowId, setOpenRowId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  /**
+   * The range anchor on the plan grid (ADR-5). The grid's "selected" is
+   * `!excluded`, which lives on the server, so there is no `useSelection()`
+   * here — only the anchor is local. Set by a plain checkbox click and by Space.
+   */
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const { message, announce } = useAnnouncer();
+  const { expanded, setExpanded, toggle: toggleExpanded } = useInspectorExpanded();
 
   const createPlan = useCreateRenamePlan();
   const planQuery = useRenamePlan(planId);
@@ -114,52 +129,145 @@ export default function RenameScreen() {
     setOpenRowId(rows[index]?.id ?? null);
   }, [rows]);
 
-  const setExcluded = useCallback((rowIds: string[], excluded: boolean) => {
+  /**
+   * Exclusions sent but not yet answered, id → excluded. Never rendered — the
+   * grid shows the server's plan and nothing else — but a range gesture reads
+   * it: Space then Shift+J inside one round trip must range from the state the
+   * anchor was just given, not the one the last response happened to carry.
+   */
+  const pendingRef = useRef(new Map<string, boolean>());
+
+  const setExcluded = useCallback((
+    rowIds: string[],
+    excluded: boolean,
+    onApplied?: (next: RenamePlanDto) => void,
+  ) => {
     if (rowIds.length === 0) return;
-    exclusion.mutate({ rowIds, excluded }, {
-      onError: (error) => {
+    const pending = pendingRef.current;
+    rowIds.forEach((id) => pending.set(id, excluded));
+    // `mutateAsync`, not `mutate`: per-call callbacks on `mutate` fire for the
+    // latest call only, and every call here has an answer to wait for.
+    exclusion.mutateAsync({ rowIds, excluded })
+      .then(onApplied, (error: unknown) => {
         push(
           error instanceof ApiError ? error.message : 'Could not change the plan.',
           'error',
         );
-      },
-    });
+      })
+      .finally(() => {
+        rowIds.forEach((id) => { if (pending.get(id) === excluded) pending.delete(id); });
+      });
   }, [exclusion, push]);
+
+  /* Range gestures (REQ-QUEUE-024, ADR-5). The plan grid has no filter, so the
+     displayed ids are the plan's rows in the order the cursor walks them. */
+  const displayedIds = useMemo(() => rows.map((row) => row.id), [rows]);
+  /** Whether a row is in the plan — the grid's "selected" — counting an
+   *  exclusion still in flight. Read at event time only. */
+  const isIncluded = useMemo(() => {
+    const excludedById = new Map(rows.map((row) => [row.id, row.excluded]));
+    return (id: string) => {
+      const pending = pendingRef.current.get(id);
+      return pending !== undefined ? !pending : excludedById.get(id) === false;
+    };
+  }, [rows]);
 
   const onToggleIndex = useCallback((index: number) => {
     const row = rows[index];
     // Only meaningful while the plan can still be edited; afterwards the space
     // bar has nothing to toggle and silently doing nothing is correct.
-    if (row && phase === 'ready') setExcluded([row.id], !row.excluded);
-  }, [rows, phase, setExcluded]);
+    if (!row || phase !== 'ready') return;
+    setAnchor(row.id);
+    setExcluded([row.id], isIncluded(row.id));
+  }, [rows, phase, setExcluded, isIncluded]);
 
+  /**
+   * One batched exclusion for the whole range, never a call per row. The
+   * sentence is spoken from the plan the server returns, so it states the
+   * same count as the "N files will be renamed" bar — nothing is optimistic.
+   */
+  const applyPlan = useCallback((plan: RangePlan) => {
+    setExcluded(plan.ids, !plan.state, (next) => {
+      announce(selectionSentence(next.affectedFiles, 'file'));
+    });
+  }, [setExcluded, announce]);
+
+  const onSelectRange = useCallback((index: number) => {
+    const id = displayedIds[index];
+    if (id === undefined) return;
+    const plan = planRange(displayedIds, anchor, id, isIncluded);
+    if (plan) { applyPlan(plan); return; }
+    setAnchor(id);
+    setExcluded([id], isIncluded(id));
+  }, [displayedIds, anchor, isIncluded, applyPlan, setExcluded]);
+
+  const onExtend = useCallback((from: number, to: number) => {
+    const fromId = displayedIds[from];
+    const toId = displayedIds[to];
+    if (fromId === undefined || toId === undefined) return;
+    const plan = planExtend(displayedIds, anchor, fromId, toId, isIncluded);
+    if (!plan) return;
+    if (plan.anchor !== anchor) setAnchor(plan.anchor);
+    applyPlan(plan);
+  }, [displayedIds, anchor, isIncluded, applyPlan]);
+
+  const inspectorOpen = openRowId !== null;
+
+  /** One level per press: collapse the inspector, then close it, then nothing. */
   const onEscape = useCallback(() => {
     if (openRowId === null) return false;
+    if (expanded) { setExpanded(false); return true; }
     setOpenRowId(null);
     return true;
-  }, [openRowId]);
+  }, [openRowId, expanded, setExpanded]);
 
   const clearOpen = useCallback(() => setOpenRowId(null), []);
 
   // The cursor lives in the keyboard hook, which already clamps it when the
   // list shrinks — and this list is replaced wholesale on every poll, so a
   // second copy here would be the thing that pointed past the end.
+  const editable = phase === 'ready';
   const { cursor, setCursor } = useListKeyboard({
     count: rows.length,
     onToggleSelect: onToggleIndex,
     onOpen,
     onEscape,
     onClearSelection: clearOpen,
+    // Ranges only while the plan can still be edited; afterwards the shifted
+    // keys move the cursor like their plain forms.
+    onExtend: editable ? onExtend : undefined,
+    onSelectRange: editable ? onSelectRange : undefined,
+    onToggleExpand: inspectorOpen ? toggleExpanded : undefined,
     searchRef,
     // The dialog owns the keyboard while it is up: j/k moving a cursor behind a
     // confirmation is how the wrong plan gets typed a number at.
     enabled: !confirming && phase !== null && GRID_PHASES.has(phase),
   });
 
+  // An open inspector shows the row under the cursor, at either width (AC3).
+  useInspectorFollowsCursor(cursor, inspectorOpen ? openRowId : null, (i) => displayedIds[i], setOpenRowId);
+
+  /** A row checkbox: plain click toggles and anchors; Shift ranges from the anchor. */
+  const onToggleRow = useCallback((id: string, shift: boolean) => {
+    if (phase !== 'ready') return;
+    const index = displayedIds.indexOf(id);
+    if (index < 0) return;
+    const plan = shift ? planRange(displayedIds, anchor, id, isIncluded) : null;
+    if (plan) {
+      applyPlan(plan);
+    } else {
+      setAnchor(id);
+      setExcluded([id], isIncluded(id));
+    }
+    // So a following Shift+J carries on from the row just clicked.
+    setCursor(index);
+  }, [phase, displayedIds, anchor, isIncluded, applyPlan, setExcluded, setCursor]);
+
   const startBuild = useCallback((entries: RenameScopeEntry[]) => {
     if (entries.length === 0) return;
     setScope(entries);
     setOpenRowId(null);
+    setAnchor(null);
     lastPhase.current = null;
     createPlan.mutate(entries, {
       onSuccess: (id) => { setPlanId(id); setCursor(0); },
@@ -185,6 +293,7 @@ export default function RenameScreen() {
   const backToScope = useCallback(() => {
     setPlanId(null);
     setOpenRowId(null);
+    setAnchor(null);
     setConfirming(false);
     apply.clearRefusal();
     lastPhase.current = null;
@@ -219,7 +328,11 @@ export default function RenameScreen() {
   const showInspector = openRow !== null && phase !== null && GRID_PHASES.has(phase);
 
   return (
-    <main className={`main${showInspector ? ' has-inspector' : ''}`} id="main" tabIndex={-1}>
+    <main
+      className={`main${showInspector ? ' has-inspector' : ''}${showInspector && expanded ? ' is-expanded' : ''}`}
+      id="main"
+      tabIndex={-1}
+    >
       <div className="content">
         <ScreenHead
           title="Rename"
@@ -280,6 +393,7 @@ export default function RenameScreen() {
             onOpen={onOpen}
             openRowId={openRowId}
             onSetExcluded={setExcluded}
+            onToggleRow={onToggleRow}
             onApply={() => setConfirming(true)}
             onRegenerate={backToScope}
             excluding={exclusion.isPending}
@@ -317,8 +431,12 @@ export default function RenameScreen() {
           onClose={() => setOpenRowId(null)}
           onSetExcluded={phase === 'ready' ? setExcluded : undefined}
           busy={exclusion.isPending}
+          expanded={expanded}
+          onToggleExpand={toggleExpanded}
         />
       ) : null}
+
+      <SelectionAnnouncer message={message} />
 
       {confirming && plan !== null ? (
         <ConfirmApplyDialog

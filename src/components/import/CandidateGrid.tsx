@@ -49,11 +49,14 @@ export interface CandidateGridProps {
   canRemap: boolean;
   cursor: number;
   onCursorChange: (index: number) => void;
-  /** Edit mode only. */
-  onToggleIncluded?: (row: ImportPlanRow) => void;
+  /**
+   * Edit mode only. `shift` is true for a shift+click — a range from the
+   * anchor to this row (REQ-QUEUE-025), which the screen sends as one edit.
+   */
+  onToggleIncluded?: (row: ImportPlanRow, shift: boolean) => void;
   /** Edit mode on a remappable instance only. */
   onChangeMapping?: (row: ImportPlanRow) => void;
-  /** A row edit is in flight; the controls wait for it rather than queue a second. */
+  /** A row or bulk edit is in flight; the controls wait for it rather than queue a second. */
   busy?: boolean;
 }
 
@@ -148,7 +151,7 @@ interface CandidateRowProps {
   isCursor: boolean;
   busy: boolean;
   onCursorChange: (index: number) => void;
-  onToggleIncluded?: (row: ImportPlanRow) => void;
+  onToggleIncluded?: (row: ImportPlanRow, shift: boolean) => void;
   onChangeMapping?: (row: ImportPlanRow) => void;
 }
 
@@ -202,7 +205,11 @@ function CandidateRow({
               // Present but disabled on an unmapped row: the operator can see
               // the control exists and why it cannot be used yet.
               disabled={unmapped || busy}
-              onChange={() => onToggleIncluded(row)}
+              // No focus on press: a focused input reads as typing to the list
+              // keyboard (j/k stop), and a shift-press would paint a text selection.
+              onMouseDown={(event) => event.preventDefault()}
+              // `change` is dispatched from the click, so the click's shift is on it.
+              onChange={(event) => onToggleIncluded(row, (event.nativeEvent as MouseEvent).shiftKey === true)}
               onKeyDown={keepKeysLocal}
               onClick={(event) => event.stopPropagation()}
               tabIndex={-1}

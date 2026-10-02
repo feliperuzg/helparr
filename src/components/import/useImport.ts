@@ -5,7 +5,7 @@ import { useCallback, useState } from 'react';
 
 import { OPERATIONS_KEY } from '@/components/search/useSearch';
 import { api, ApiError, type ImportEpisodeChoice, type ImportPlanRead } from '@/lib/api';
-import type { ImportMapping, ImportRefusal } from '@/lib/importPlan';
+import type { ImportBulkEdit, ImportBulkResult, ImportMapping, ImportRefusal } from '@/lib/importPlan';
 
 /**
  * Force import's data layer (ADR-3..ADR-8; T11, T14) — `useRename.ts`'s terms,
@@ -82,6 +82,24 @@ export function useEditImportRow(planId: string | null) {
     mutationFn: (body) => api.editImportRow(planId as string, body),
     onSuccess: (plan) => {
       client.setQueryData(IMPORT_PLAN_KEY(planId), plan);
+    },
+  });
+}
+
+/**
+ * Include all / Exclude all / Include all replacements and range inclusion
+ * (ADR-6). Same cache discipline as `useEditImportRow`; the `bulk` summary is
+ * the mutation's result for the outcome line, and stays out of the cached
+ * plan so the next poll does not have to clear it.
+ */
+export function useBulkEditImportRows(planId: string | null) {
+  const client = useQueryClient();
+
+  return useMutation<ImportBulkResult, Error, ImportBulkEdit>({
+    mutationFn: async (body) => {
+      const { bulk, ...plan } = await api.bulkEditImportRows(planId as string, body);
+      client.setQueryData<ImportPlanRead>(IMPORT_PLAN_KEY(planId), plan);
+      return bulk;
     },
   });
 }

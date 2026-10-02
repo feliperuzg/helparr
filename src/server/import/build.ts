@@ -1,6 +1,6 @@
 import 'server-only';
 
-import type { ImportMapping, ImportPlan, ImportPlanRow } from '@/lib/importPlan';
+import type { ImportBulkSkip, ImportMapping, ImportPlan, ImportPlanRow } from '@/lib/importPlan';
 import {
   type ArrEpisodeRef,
   type InstanceClient,
@@ -12,7 +12,9 @@ import {
   createImportPlan,
   getImportPlan,
   updateImportRow,
+  updateImportRows,
   type ImportRowUpdateError,
+  type ImportRowsUpdateError,
 } from './store';
 import { resolveImportRows, type ResolvedImportRow } from './resolve';
 
@@ -206,6 +208,27 @@ export async function editImportRow(
 
   const result = updateImportRow(planId, ordinal, patch);
   return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+export type EditImportRowsError = ImportRowsUpdateError;
+export type EditImportRowsResult =
+  | { ok: true; changed: number; skipped: ImportBulkSkip[] }
+  | { ok: false; error: EditImportRowsError };
+
+/**
+ * "Include all" / "Exclude all" / "Include all replacements" and range
+ * inclusion (ADR-6, REQ-QUEUE-025). Unlike `editImportRow`, there is no
+ * mapping to validate — a bulk edit only ever sets `included`, so this is a
+ * thin pass to `updateImportRows`'s single transaction, kept as its own
+ * function so the route dispatches on request shape rather than reaching
+ * into `store.ts` directly.
+ */
+export function editImportRows(
+  planId: string,
+  ordinals: number[],
+  included: boolean,
+): EditImportRowsResult {
+  return updateImportRows(planId, ordinals, included);
 }
 
 export type EpisodeChoicesResult =

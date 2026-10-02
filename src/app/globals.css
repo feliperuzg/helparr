@@ -202,7 +202,14 @@
   --nav-bg:         var(--color-surface);
   --nav-height:     48px;
   --sidebar-width:  240px;
-  --inspector-width: 380px;
+  /* REQ-QUEUE-011: wide enough for cause, evidence and the upstream message
+     list without wrapping every line. `--inspector-list-min` is the floor the
+     list keeps when the inspector is expanded, so the cursor row it is
+     showing never leaves the screen. */
+  --inspector-list-min: 360px;
+  /* 560px, unless that would push the list under its floor on a narrower
+     desktop; never below the 320px the old narrow step resolved to. */
+  --inspector-width: clamp(320px, 100vw - var(--sidebar-width) - var(--inspector-list-min), 560px);
   /* Dense tables: <= 36px per DESIGN.md §5.
      This one stays a fixed `height` on the virtualized rows rather than the
      `min-height` every other text container now carries. Those rows are
@@ -461,6 +468,14 @@ small { font-size: var(--text-sm); letter-spacing: 0.01em; }
   transition: grid-template-columns var(--duration-normal) var(--ease-productive);
 }
 .main.has-inspector { grid-template-columns: minmax(0, 1fr) var(--inspector-width); }
+/* Expanded (REQ-QUEUE-011): the list falls to its floor and the inspector takes
+   everything else. The second track is not `1fr` so the free space goes to it,
+   not split between the two. Still a column beside the list, never a modal. */
+.main.has-inspector.is-expanded {
+  grid-template-columns:
+    minmax(var(--inspector-list-min), 1fr)
+    minmax(0, calc(100% - var(--inspector-list-min)));
+}
 
 .content {
   display: flex; flex-direction: column;
@@ -670,6 +685,16 @@ select.input {
   box-shadow: inset 8px 8px var(--color-foreground);
 }
 .checkbox:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+/* Shift+click selects a range of rows. Without this the same gesture also
+   extends the page's text selection across every row in between, painting a
+   highlight that has nothing to do with what was selected. Scoped to the
+   check cells (and the scope picker's rows, whose whole label is the target)
+   so titles and paths elsewhere in a row stay copyable. */
+.qgrid__cell--check,
+.ggrid__cell--check,
+.pgrid__cell--check,
+.table .col-check,
+.scope__item { -webkit-user-select: none; user-select: none; }
 
 /* Toggle */
 .toggle {
@@ -2115,6 +2140,19 @@ select.input {
 .bulkbar--apply { --bulkbar-accent: var(--color-status-warn); }
 .bulkbar--apply .bulkbar__count { font-variant-numeric: tabular-nums; }
 
+/* ---- Force import bulk actions (REQ-QUEUE-025) -------------------------- */
+/* A row of named edits above the candidate grid, and the line saying what the
+   last one did. No count of its own: the apply bar already states it. */
+.bulk-include {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+.bulk-include__busy {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-xs); color: var(--color-text-muted);
+}
+.bulk-include__outcome { margin-bottom: var(--space-3); }
+
 /* ---- Confirm dialog (T13) ----------------------------------------------- */
 .modal__lead {
   margin: 0 0 var(--space-4);
@@ -2256,7 +2294,16 @@ select.input {
    RESPONSIVE (DESIGN.md §8) — mobile-first fallbacks for a desktop console
    ========================================================================= */
 @media (max-width: 1100px) {
-  :root { --inspector-width: 320px; }
+  /* 472px is the 560px default scaled by the old 320/380 step. Clamped so the
+     list keeps `--inspector-list-min` where the viewport allows, and the panel
+     never drops below the 320px it used to resolve to at this breakpoint. */
+  :root {
+    --inspector-width: clamp(
+      320px,
+      100vw - var(--sidebar-width) - var(--inspector-list-min),
+      472px
+    );
+  }
 }
 
 /* Desktop: the menu button collapses the rail outright rather than animating a
@@ -2286,8 +2333,12 @@ select.input {
   .sidebar.is-open { transform: none; }
   .sidebar-scrim { position: fixed; inset: 0; z-index: 39; background: var(--color-overlay); }
 
-  /* Inspector becomes a full-height sheet rather than a column */
-  .main.has-inspector { grid-template-columns: minmax(0, 1fr); }
+  /* Inspector becomes a full-height sheet rather than a column. It is already
+     full width here, so expanding has nothing to do: the control is hidden and
+     `is-expanded` resolves to the same single column. */
+  .main.has-inspector,
+  .main.has-inspector.is-expanded { grid-template-columns: minmax(0, 1fr); }
+  .inspector__expand { display: none; }
   .inspector {
     position: fixed; z-index: 45;
     top: var(--nav-height); right: 0; bottom: 0; left: 0;

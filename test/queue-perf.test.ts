@@ -135,4 +135,42 @@ describe('queue performance', () => {
       .toBeLessThanOrEqual(Math.ceil(result.frames.length * 0.1));
     expect(median, `median frame ${median.toFixed(1)}ms`).toBeLessThan(LONG_FRAME_MS);
   }, 60_000);
+
+  /**
+   * queue-triage-ergonomics NFR1: a range over the whole queue is one state
+   * update, not 500 — and it must not cost the window its bound.
+   */
+  it('selects a 500-row range in one gesture, inside the frame guards', async () => {
+    await page.goto(app.origin);
+    await page.waitForSelector('.qgrid__body-row');
+    await page.locator('#main').focus();
+
+    await page.keyboard.press('Home');
+    await page.keyboard.press(' ');
+    await expect.poll(() => page.textContent('.bulkbar__count')).toBe('1 item selected');
+    await page.keyboard.press('End');
+    await expect.poll(() => page.getAttribute('.qgrid__body-row.is-cursor', 'aria-rowindex'))
+      .toBe(String(QUEUE_SIZE + 1));
+
+    const started = Date.now();
+    await page.keyboard.press('Shift+Space');
+    await expect.poll(() => page.textContent('.bulkbar__count'), { interval: 10 })
+      .toBe(`${QUEUE_SIZE} items selected`);
+    const elapsed = Date.now() - started;
+    expect(elapsed, `the range took ${elapsed}ms to land`).toBeLessThan(1_000);
+
+    const rendered = await page.locator('.qgrid__body-row').count();
+    expect(rendered, `${rendered} rows in the DOM after the range`).toBeLessThan(80);
+    expect(await page.locator('.qgrid__body-row.is-selected').count()).toBe(rendered);
+
+    // Shift+K walked back across the range deselects nothing outside it and
+    // keeps each step cheap: twenty steps, each one a single set update.
+    const walk = Date.now();
+    for (let i = 0; i < 20; i += 1) await page.keyboard.press('Shift+K');
+    expect(Date.now() - walk, 'twenty Shift+K steps').toBeLessThan(2_000);
+    expect(await page.textContent('.bulkbar__count')).toBe(`${QUEUE_SIZE} items selected`);
+
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.bulkbar').count()).toBe(0);
+  }, 60_000);
 });

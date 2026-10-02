@@ -61,7 +61,8 @@ export interface QueueTableProps {
   cursor: number;
   onCursorChange: (index: number) => void;
   selected: ReadonlySet<string>;
-  onToggleSelect: (id: string) => void;
+  /** `shift` is true for a shift+click — the screen selects anchor → row. */
+  onToggleSelect: (id: string, shift: boolean) => void;
   onOpen: (index: number) => void;
   pending: ReadonlySet<string>;
   sort: Sort;
@@ -209,7 +210,7 @@ interface RowProps {
   isSelected: boolean;
   isPending: boolean;
   onCursorChange: (index: number) => void;
-  onToggleSelect: (id: string) => void;
+  onToggleSelect: (id: string, shift: boolean) => void;
   onOpen: (index: number) => void;
 }
 
@@ -271,7 +272,11 @@ function Row({
           className="checkbox"
           checked={isSelected}
           disabled={isPending}
-          onChange={() => onToggleSelect(record.id)}
+          // No text selection on shift+click, and focus stays off the input —
+          // a focused input reads as typing, which would silence j/k.
+          onMouseDown={(e) => e.preventDefault()}
+          // `change` is dispatched from the click, so the modifier is on it.
+          onChange={(e) => onToggleSelect(record.id, (e.nativeEvent as MouseEvent).shiftKey)}
           aria-label={`Select ${record.title}`}
           tabIndex={-1}
         />

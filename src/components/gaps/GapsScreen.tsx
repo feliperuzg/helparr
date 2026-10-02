@@ -13,7 +13,11 @@ import {
 } from '@/components/gaps/useGaps';
 import Icon from '@/components/Icon';
 import DegradedBanner from '@/components/queue/DegradedBanner';
-import { useListKeyboard, useSelection } from '@/components/useListKeyboard';
+import { SelectionAnnouncer, selectionSentence, useAnnouncer } from '@/components/SelectionAnnouncer';
+import { useInspectorExpanded } from '@/components/useInspectorExpanded';
+import {
+  useInspectorFollowsCursor, useListKeyboard, useSelection, type RangeOutcome,
+} from '@/components/useListKeyboard';
 import {
   BulkBar, Callout, ChipGroup, EmptyState, FilterChip, KeyboardHints, ScreenHead, SearchField,
   ToastStack, useToasts,
@@ -49,9 +53,17 @@ const HINTS: Array<[string[], string]> = [
   [['/'], 'filter'],
   [['j', 'k'], 'move'],
   [['space'], 'select'],
+  [['shift', 'j', 'k'], 'extend'],
   [['enter'], 'inspect'],
   [['esc'], 'close'],
   [['?'], 'all shortcuts'],
+];
+
+/** `e` only means something while a panel is open to expand. */
+const INSPECTOR_HINTS: Array<[string[], string]> = [
+  ...HINTS.slice(0, -1),
+  [['e'], 'expand'],
+  ...HINTS.slice(-1),
 ];
 
 type Scope = 'all' | 'sonarr' | 'radarr';
@@ -85,7 +97,11 @@ export default function GapsScreen() {
   const attach = useAttachGap();
   const attachSeason = useAttachSeason();
   const bulkSearch = useBulkSearch();
-  const { selected, toggle, clear, reconcile } = useSelection();
+  const {
+    selected, toggle, clear, reconcile, rangeTo, extend,
+  } = useSelection();
+  const { expanded, setExpanded, toggle: toggleExpanded } = useInspectorExpanded();
+  const { message, announce } = useAnnouncer();
 
   const gaps = useMemo(() => gapsList.data?.gaps ?? [], [gapsList.data]);
 
@@ -101,6 +117,25 @@ export default function GapsScreen() {
   // bulk bar whose command would then name nothing.
   const presentIds = useMemo(() => new Set(gaps.map((gap) => gap.id)), [gaps]);
   useEffect(() => { reconcile(presentIds); }, [presentIds, reconcile]);
+
+  // The rows as listed, in the order the cursor walks them — the only list a
+  // range is ever computed over, so a row a filter hides is never swept in
+  // (REQ-QUEUE-024). Group headings are not in it: they are not rows here.
+  const displayedIds = useMemo(() => visible.map((gap) => gap.id), [visible]);
+
+  // A range only touches listed rows, so whatever is selected but filtered out
+  // is the same before and after it. Subtracted from the outcome, the number
+  // spoken is the one the bulk bar — which counts listed rows — will state.
+  const hiddenSelected = useMemo(() => {
+    const listed = new Set(displayedIds);
+    let n = 0;
+    selected.forEach((id) => { if (!listed.has(id)) n += 1; });
+    return n;
+  }, [displayedIds, selected]);
+
+  const announceRange = useCallback((outcome: RangeOutcome | null) => {
+    if (outcome) announce(selectionSentence(outcome.total - hiddenSelected, 'gap'));
+  }, [announce, hiddenSelected]);
 
   // Derived, not synced: the panel shows the open gap only while it is still
   // listed, so a filter that excludes it closes it with no effect needed.
@@ -132,11 +167,29 @@ export default function GapsScreen() {
     visible.forEach((gap) => { if (!selected.has(gap.id)) toggle(gap.id); });
   }, [visible, selected, clear, toggle]);
 
+  // One level per press: an expanded panel narrows, a narrow one closes, and
+  // only with no panel open does Escape fall through to clearing the selection.
+  const inspectorOpen = openGap !== null;
   const onEscape = useCallback(() => {
-    if (openId === null) return false;
+    if (!inspectorOpen) return false;
+    if (expanded) { setExpanded(false); return true; }
     setOpenId(null);
     return true;
-  }, [openId]);
+  }, [inspectorOpen, expanded, setExpanded]);
+
+  // Shift+J/K: the cursor already moved `from` → `to`; the selection follows.
+  const onExtend = useCallback((from: number, to: number) => {
+    const fromId = displayedIds[from];
+    const toId = displayedIds[to];
+    if (fromId === undefined || toId === undefined) return;
+    announceRange(extend(displayedIds, fromId, toId));
+  }, [displayedIds, extend, announceRange]);
+
+  // Shift+Space: anchor → cursor.
+  const onSelectRange = useCallback((index: number) => {
+    const id = displayedIds[index];
+    if (id !== undefined) announceRange(rangeTo(displayedIds, id));
+  }, [displayedIds, rangeTo, announceRange]);
 
   const { cursor, setCursor } = useListKeyboard({
     count: visible.length,
@@ -144,11 +197,26 @@ export default function GapsScreen() {
     onOpen,
     onEscape,
     onClearSelection: clear,
+    onExtend,
+    onSelectRange,
+    onToggleExpand: inspectorOpen ? toggleExpanded : undefined,
     searchRef,
     // A dialog owns the keyboard while it is up: j/k moving a cursor behind a
     // confirmation is how the wrong item gets attached.
     enabled: attaching === null && searching === null && seasonAttach === null,
   });
+
+  useInspectorFollowsCursor(cursor, inspectorOpen ? openId : null, (i) => displayedIds[i], setOpenId);
+
+  // A checkbox click: shift makes it a range from the anchor over the listed
+  // rows, a plain click toggles and becomes the anchor. Either way the cursor
+  // moves there, so a following Shift+J continues from the clicked row.
+  const onToggleSelect = useCallback((id: string, shift: boolean) => {
+    if (shift) announceRange(rangeTo(displayedIds, id));
+    else toggle(id);
+    const index = displayedIds.indexOf(id);
+    if (index >= 0) setCursor(index);
+  }, [displayedIds, rangeTo, toggle, announceRange, setCursor]);
 
   const errors = gapsList.data?.errors ?? [];
   const lastReadAt = gapsList.data?.lastReadAt ?? {};
@@ -283,7 +351,11 @@ export default function GapsScreen() {
   }, [gapsList.data]);
 
   return (
-    <main className={`main${openGap ? ' has-inspector' : ''}`} id="main" tabIndex={-1}>
+    <main
+      className={`main${openGap ? ' has-inspector' : ''}${openGap && expanded ? ' is-expanded' : ''}`}
+      id="main"
+      tabIndex={-1}
+    >
       <div className="content">
         <ScreenHead
           title="Gaps"
@@ -378,7 +450,7 @@ export default function GapsScreen() {
                 onOpen={onOpen}
                 openGapId={null}
                 selected={selected}
-                onToggleSelect={toggle}
+                onToggleSelect={onToggleSelect}
                 onToggleAll={toggleAll}
                 loading
               />
@@ -417,7 +489,7 @@ export default function GapsScreen() {
                 onOpen={onOpen}
                 openGapId={openGap?.id ?? null}
                 selected={selected}
-                onToggleSelect={toggle}
+                onToggleSelect={onToggleSelect}
                 onToggleAll={toggleAll}
                 onAttachSeason={(gap, seasons) => setSeasonAttach({ gap, seasons })}
               />
@@ -425,7 +497,7 @@ export default function GapsScreen() {
           </section>
 
           <section className="section">
-            <KeyboardHints items={HINTS} />
+            <KeyboardHints items={openGap ? INSPECTOR_HINTS : HINTS} />
           </section>
         </div>
 
@@ -449,6 +521,8 @@ export default function GapsScreen() {
           onClose={() => setOpenId(null)}
           onAttach={() => setAttaching(openGap)}
           onSearch={() => setSearching([openGap])}
+          expanded={expanded}
+          onToggleExpand={toggleExpanded}
         />
       ) : null}
 
@@ -480,6 +554,9 @@ export default function GapsScreen() {
         />
       ) : null}
 
+      {/* Always mounted: a live region inserted with its first message says
+          nothing (REQ-A11Y-011). */}
+      <SelectionAnnouncer message={message} />
       <ToastStack toasts={toasts} />
     </main>
   );

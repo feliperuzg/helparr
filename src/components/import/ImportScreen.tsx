@@ -10,21 +10,26 @@ import EpisodePicker, { type PickerSeries } from '@/components/import/EpisodePic
 import ImportProgress from '@/components/import/ImportProgress';
 import ImportRefusal, { REBUILD_ONLY } from '@/components/import/ImportRefusal';
 import {
-  useApplyImportPlan, useCreateImportPlan, useEditImportRow, useImportPlan,
+  useApplyImportPlan, useBulkEditImportRows, useCreateImportPlan, useEditImportRow, useImportPlan,
 } from '@/components/import/useImport';
 import { formatDuration } from '@/components/rename/planView';
+import { SelectionAnnouncer, useAnnouncer } from '@/components/SelectionAnnouncer';
 import { useListKeyboard } from '@/components/useListKeyboard';
 import {
   Callout, KeyboardHints, Modal, ScreenHead, StatusBadge, ToastStack, useToasts,
 } from '@/components/ui';
 import { ApiError, type ImportPlanRead } from '@/lib/api';
 import {
+  allOrdinals,
   includedCount,
+  replacementOrdinals,
+  type ImportBulkResult,
   type ImportMapping,
   type ImportPlanPhase,
   type ImportPlanRow,
   type ImportRefusal as ImportRefusalValue,
 } from '@/lib/importPlan';
+import { planExtend, planRange } from '@/lib/rangeSelection';
 
 /**
  * The force-import screen (T17; FR6–FR10, ADR-3..ADR-8, REQ-QUEUE-021/022).
@@ -54,6 +59,7 @@ import {
 const EDIT_HINTS: Array<[string[], string]> = [
   [['j', 'k'], 'move'],
   [['space'], 'include / exclude'],
+  [['shift', 'j', 'k'], 'extend'],
   [['enter'], 'change mapping'],
   [['?'], 'all shortcuts'],
 ];
@@ -95,6 +101,48 @@ function editErrorText(error: Error, instanceLabel: string): string {
       return 'That file is no longer part of this preview. Rebuild it to see the current candidates.';
     default:
       return `${error.message} The plan is as it was.`;
+  }
+}
+
+/** What the last bulk or range edit did — the line under the bulk-action group. */
+interface BulkOutcome {
+  tone: 'ok' | 'error';
+  text: string;
+}
+
+function files(n: number): string {
+  return `${n} file${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * A bulk edit's result in words (FR7): how many rows it changed, and how many
+ * it skipped and why — never a bare count of skips.
+ */
+function bulkOutcomeText(bulk: ImportBulkResult, included: boolean): string {
+  const verb = included ? 'Included' : 'Excluded';
+  const skipped = bulk.skipped.length;
+  if (skipped > 0) return `${verb} ${bulk.changed} · skipped ${skipped} — no target`;
+  if (bulk.changed === 0) {
+    return `No change — ${included ? 'every includable file was already included' : 'those files were already excluded'}.`;
+  }
+  return `${verb} ${files(bulk.changed)}.`;
+}
+
+/**
+ * A bulk edit is one transaction on the server, so a failure means no row moved.
+ * Said first, because it is the thing the operator needs to know.
+ */
+function bulkErrorText(error: Error): string {
+  if (!(error instanceof ApiError)) {
+    return 'Nothing changed — the edit could not be sent. Every file is as it was.';
+  }
+  switch (error.message) {
+    case 'plan-not-ready':
+      return 'Nothing changed — the plan could not be saved. This preview can no longer be changed; it expired or is already being imported. Rebuild to try again.';
+    case 'row-not-found':
+      return 'Nothing changed — a file in that set is no longer part of this preview. Rebuild it to see the current candidates.';
+    default:
+      return `Nothing changed — the plan could not be saved (${error.message}). Every file is as it was.`;
   }
 }
 
@@ -140,10 +188,15 @@ export default function ImportScreen({
   const [confirming, setConfirming] = useState(false);
   const [pickerOrdinal, setPickerOrdinal] = useState<number | null>(null);
   const [pickerError, setPickerError] = useState<string | null>(null);
+  /** The range anchor, by ordinal: set by a plain toggle (click or Space). */
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [outcome, setOutcome] = useState<BulkOutcome | null>(null);
+  const { message, announce } = useAnnouncer();
 
   const createPlan = useCreateImportPlan();
   const planQuery = useImportPlan(planId);
   const editRow = useEditImportRow(planId);
+  const bulkEdit = useBulkEditImportRows(planId);
   const apply = useApplyImportPlan(planId);
 
   const plan = planQuery.data ?? null;
@@ -197,16 +250,91 @@ export default function ImportScreen({
     ? null
     : rows.find((row) => row.ordinal === pickerOrdinal) ?? null;
 
+  /** One edit at a time, single or bulk — a second must not race the first's all-or-nothing answer. */
+  const editing = editRow.isPending || bulkEdit.isPending;
+
   const toggleRow = useCallback((row: ImportPlanRow) => {
-    if (!editable || editRow.isPending) return;
+    if (!editable || editing) return;
     if (row.mapping === null && !row.included) {
       push('That file has no target yet. Map it with “Change…” before including it.', 'warn');
       return;
     }
+    setAnchor(row.ordinal);
+    // The outcome line speaks for the last bulk edit; a single edit supersedes it.
+    setOutcome(null);
     editRow.mutate({ ordinal: row.ordinal, included: !row.included }, {
       onError: (error) => push(editErrorText(error, instanceLabel), 'error'),
     });
-  }, [editable, editRow, push, instanceLabel]);
+  }, [editable, editing, editRow, push, instanceLabel]);
+
+  /** Range helpers speak in string ids; the plan's are ordinals, in render order. */
+  const displayedIds = useMemo(() => rows.map((row) => String(row.ordinal)), [rows]);
+  const includedOf = useCallback((id: string) => (
+    rows.find((row) => String(row.ordinal) === id)?.included ?? false
+  ), [rows]);
+
+  /**
+   * Include all / Exclude all / Include all replacements and every range
+   * gesture: one PATCH, all or nothing (ADR-6). Nothing is optimistic — the
+   * rows move when the refreshed plan lands in the cache, and on a failure
+   * they do not move at all.
+   */
+  const runBulk = useCallback((ordinals: number[], included: boolean) => {
+    if (!editable || editing || ordinals.length === 0) return;
+    const before = rows.filter((row) => row.included).length;
+    const total = rows.length;
+    bulkEdit.mutate({ ordinals, included }, {
+      onSuccess: (bulk) => {
+        const text = bulkOutcomeText(bulk, included);
+        const after = included ? before + bulk.changed : before - bulk.changed;
+        setOutcome({ tone: 'ok', text });
+        announce(`${text.replace(/\.$/, '')}. ${after} of ${files(total)} now included.`);
+      },
+      onError: (error) => {
+        const text = bulkErrorText(error);
+        setOutcome({ tone: 'error', text });
+        announce(text);
+      },
+    });
+  }, [editable, editing, rows, bulkEdit, announce]);
+
+  const includeAll = useCallback(() => runBulk(allOrdinals(rows), true), [runBulk, rows]);
+  const excludeAll = useCallback(() => runBulk(allOrdinals(rows), false), [runBulk, rows]);
+  const includeReplacements = useCallback(() => {
+    // Only the excluded ones: the button's count is what it will change.
+    const excluded = new Set(rows.filter((row) => !row.included).map((row) => row.ordinal));
+    runBulk(replacementOrdinals(rows).filter((ordinal) => excluded.has(ordinal)), true);
+  }, [runBulk, rows]);
+
+  /**
+   * A range takes the anchor row's state (ADR-5) and goes through the bulk
+   * endpoint, so an unmapped row inside it is skipped and named exactly as a
+   * named bulk action would. A range that would change nothing sends nothing.
+   */
+  const applyRangePlan = useCallback((ids: string[], state: boolean) => {
+    if (!ids.some((id) => includedOf(id) !== state)) {
+      const now = rows.filter((row) => row.included).length;
+      announce(`No change. ${now} of ${files(rows.length)} included.`);
+      return;
+    }
+    runBulk(ids.map(Number), state);
+  }, [includedOf, rows, announce, runBulk]);
+
+  /** shift+click and Shift+Space: anchor → target. No displayed anchor degrades to a plain toggle. */
+  const rangeToRow = useCallback((row: ImportPlanRow) => {
+    if (!editable || editing) return;
+    const range = planRange(
+      displayedIds,
+      anchor === null ? null : String(anchor),
+      String(row.ordinal),
+      includedOf,
+    );
+    if (!range) {
+      toggleRow(row);
+      return;
+    }
+    applyRangePlan(range.ids, range.state);
+  }, [editable, editing, displayedIds, anchor, includedOf, toggleRow, applyRangePlan]);
 
   const openPicker = useCallback((row: ImportPlanRow) => {
     if (!editable) return;
@@ -233,6 +361,29 @@ export default function ImportScreen({
     if (row) toggleRow(row);
   }, [rows, toggleRow]);
 
+  const onSelectRange = useCallback((index: number) => {
+    const row = rows[index];
+    if (row) rangeToRow(row);
+  }, [rows, rangeToRow]);
+
+  /** Shift+J/K: the cursor already moved `from` → `to`; both take the anchor's state. */
+  const onExtend = useCallback((from: number, to: number) => {
+    if (!editable || editing || from === to) return;
+    const fromId = displayedIds[from];
+    const toId = displayedIds[to];
+    if (fromId === undefined || toId === undefined) return;
+    const range = planExtend(
+      displayedIds,
+      anchor === null ? null : String(anchor),
+      fromId,
+      toId,
+      includedOf,
+    );
+    if (!range) return;
+    if (range.anchor !== String(anchor)) setAnchor(Number(range.anchor));
+    applyRangePlan(range.ids, range.state);
+  }, [editable, editing, displayedIds, anchor, includedOf, applyRangePlan]);
+
   const onOpenIndex = useCallback((index: number) => {
     const row = rows[index];
     if (row && writable) openPicker(row);
@@ -245,11 +396,21 @@ export default function ImportScreen({
     onToggleSelect: onToggleIndex,
     onOpen: onOpenIndex,
     onEscape,
+    onExtend,
+    onSelectRange,
     searchRef,
     // A dialog owns the keyboard while it is up: j/k moving a cursor behind
     // the typed gate is how the wrong plan gets a number typed at it.
     enabled: !confirming && pickerOrdinal === null && (phase === 'ready' || expired),
   });
+
+  /** The grid's checkbox: shift+click is a range, a plain click a toggle. Either moves the cursor there. */
+  const onCheckbox = useCallback((row: ImportPlanRow, shift: boolean) => {
+    const index = rows.indexOf(row);
+    if (index >= 0) setCursor(index);
+    if (shift) rangeToRow(row);
+    else toggleRow(row);
+  }, [rows, setCursor, rangeToRow, toggleRow]);
 
   /** The one way a plan is made. Any previous plan is left to age out. */
   const startBuild = useCallback((target: Source) => {
@@ -257,6 +418,8 @@ export default function ImportScreen({
     setPlanId(null);
     setConfirming(false);
     setPickerOrdinal(null);
+    setAnchor(null);
+    setOutcome(null);
     apply.clearRefusal();
     lastPhase.current = null;
     createPlan.mutate(target, {
@@ -406,11 +569,18 @@ export default function ImportScreen({
         msLeft={msLeft}
         cursor={cursor}
         onCursorChange={setCursor}
-        onToggleIncluded={toggleRow}
+        onToggleIncluded={onCheckbox}
         onChangeMapping={openPicker}
         onImport={openConfirm}
         onRebuild={rebuild}
-        editing={editRow.isPending}
+        bulk={editable ? {
+          onIncludeAll: includeAll,
+          onExcludeAll: excludeAll,
+          onIncludeReplacements: includeReplacements,
+          pending: bulkEdit.isPending,
+          outcome,
+        } : null}
+        editing={editing}
         applying={apply.isPending}
         rebuilding={createPlan.isPending}
         softRefusal={softRefusal}
@@ -434,6 +604,9 @@ export default function ImportScreen({
         />
 
         {body}
+
+        {/* Always mounted: a live region inserted with its first message says nothing. */}
+        <SelectionAnnouncer message={message} />
 
         {showHints ? (
           <section className="section">
@@ -535,16 +708,28 @@ function BuildState({
 
 /* ── Review (§2) and the Radarr read-only variant ────────────────────────── */
 
+/** The bulk-action group's wiring; null whenever the plan cannot be edited. */
+interface BulkActions {
+  onIncludeAll: () => void;
+  onExcludeAll: () => void;
+  onIncludeReplacements: () => void;
+  /** A bulk edit is in flight. */
+  pending: boolean;
+  outcome: BulkOutcome | null;
+}
+
 interface ReviewProps {
   plan: ImportPlanRead;
   writable: boolean;
   msLeft: number | null;
   cursor: number;
   onCursorChange: (index: number) => void;
-  onToggleIncluded: (row: ImportPlanRow) => void;
+  onToggleIncluded: (row: ImportPlanRow, shift: boolean) => void;
   onChangeMapping: (row: ImportPlanRow) => void;
   onImport: () => void;
   onRebuild: () => void;
+  bulk: BulkActions | null;
+  /** Any edit — single or bulk — is in flight. */
   editing: boolean;
   applying: boolean;
   rebuilding: boolean;
@@ -553,7 +738,7 @@ interface ReviewProps {
 
 function Review({
   plan, writable, msLeft, cursor, onCursorChange, onToggleIncluded, onChangeMapping,
-  onImport, onRebuild, editing, applying, rebuilding, softRefusal,
+  onImport, onRebuild, bulk, editing, applying, rebuilding, softRefusal,
 }: ReviewProps) {
   const instance = plan.instanceLabel;
   const included = includedCount(plan);
@@ -674,6 +859,14 @@ function Review({
         ) : null}
 
         <section className="section" style={{ paddingTop: 0 }}>
+          {bulk ? (
+            <BulkIncludeActions
+              {...bulk}
+              replacementsExcluded={replacing.length - replacingIncluded}
+              hasReplacements={replacing.length > 0}
+              disabled={editing || applying}
+            />
+          ) : null}
           <CandidateGrid
             rows={plan.rows}
             mode="edit"
@@ -717,6 +910,64 @@ function Review({
           Import {included} file{included === 1 ? '' : 's'}…
         </button>
       </div>
+    </>
+  );
+}
+
+/* ── Bulk include / exclude (REQ-QUEUE-025) ──────────────────────────────── */
+
+/**
+ * Three named edits over the whole plan, and the line saying what the last
+ * one did. Not a `BulkBar`: it has no selection of its own to count — the
+ * apply bar's "N included" already is that number, and the typed gate asks
+ * for it (FR9). A bulk edit only ever moves inclusion; the gate is untouched.
+ */
+function BulkIncludeActions({
+  onIncludeAll, onExcludeAll, onIncludeReplacements, pending, outcome,
+  replacementsExcluded, hasReplacements, disabled,
+}: BulkActions & {
+  /** Replacement rows still excluded — what "Include all replacements" would change. */
+  replacementsExcluded: number;
+  hasReplacements: boolean;
+  /** Any edit or the apply is in flight; a second edit waits. */
+  disabled: boolean;
+}) {
+  return (
+    <>
+      <div className="bulk-include" role="group" aria-label="Bulk actions" aria-busy={pending || undefined}>
+        <button type="button" className="btn btn-outline btn-sm" onClick={onIncludeAll} disabled={disabled}>
+          Include all
+        </button>
+        <button type="button" className="btn btn-outline btn-sm" onClick={onExcludeAll} disabled={disabled}>
+          Exclude all
+        </button>
+        {hasReplacements ? (
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={onIncludeReplacements}
+            // Stays on screen at zero, so the button the operator just used
+            // does not vanish from under them; its count says why it is idle.
+            disabled={disabled || replacementsExcluded === 0}
+          >
+            Include all replacements ({replacementsExcluded})
+          </button>
+        ) : null}
+        {pending ? (
+          <span className="bulk-include__busy">
+            <span className="spinner" aria-hidden="true" />
+            Saving…
+          </span>
+        ) : null}
+      </div>
+      {/* Inline, not a toast: it stays while the operator reviews what it
+          changed. Spoken through the screen's announcer, not a second live
+          region, so it is heard once. */}
+      {outcome ? (
+        <div className="bulk-include__outcome">
+          <Callout tone={outcome.tone}>{outcome.text}</Callout>
+        </div>
+      ) : null}
     </>
   );
 }

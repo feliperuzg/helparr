@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 
-import type { ImportMapping } from '@/lib/importPlan';
+import type { ImportBulkResult, ImportMapping } from '@/lib/importPlan';
+import { patchSchema, type ImportRowPatch } from '@/server/import/editSchema';
 import { requireSession } from '@/server/auth/guard';
-import { editImportRow, type EditImportRowError } from '@/server/import/build';
+import { editImportRow, editImportRows, type EditImportRowError, type EditImportRowsError } from '@/server/import/build';
 import { getImportPlan } from '@/server/import/store';
 import { isImporting } from '@/server/import/apply';
 import { importWriteEnabled } from '@/server/import/kinds';
@@ -42,39 +42,16 @@ export async function GET(_request: Request, { params }: Params) {
   );
 }
 
-const seriesMappingSchema = z.object({
-  kind: z.literal('series'),
-  seriesId: z.number().int().positive(),
-  seriesTitle: z.string().nullable(),
-  seasonNumber: z.number().int(),
-  episodeIds: z.array(z.number().int()),
-  label: z.string().min(1).max(512),
-}).strict();
 
-const movieMappingSchema = z.object({
-  kind: z.literal('movie'),
-  movieId: z.number().int().positive(),
-  label: z.string().min(1).max(512),
-}).strict();
-
-// Mirrors `ImportMapping` (`lib/importPlan.ts`) field for field — a mapping
-// override must be one of exactly these two shapes, each `.strict()`.
-const mappingSchema = z.discriminatedUnion('kind', [seriesMappingSchema, movieMappingSchema]);
-
-const patchSchema = z.object({
-  ordinal: z.number().int().nonnegative(),
-  included: z.boolean().optional(),
-  mapping: mappingSchema.optional(),
-}).strict();
-
-const EDIT_STATUS: Record<EditImportRowError, number> = {
+const EDIT_STATUS: Record<EditImportRowError | EditImportRowsError, number> = {
   // The plan itself does not exist, or exists but has left `ready` — named
   // distinctly from a missing row (ADR-3's TTL and `startImport`'s own guard
   // against a concurrent apply).
   'plan-not-ready': 409,
   'row-not-found': 404,
   // Included with no mapping at all — a well-formed request the row simply
-  // cannot satisfy yet (`store.ts`'s `updateImportRow`).
+  // cannot satisfy yet (`store.ts`'s `updateImportRow`). A bulk edit never
+  // hits this: an unmapped row is skipped, not refused (ADR-6).
   'missing-mapping': 400,
   // The override does not resolve — wrong series, an episode outside it, or
   // the instance could not be re-read (`build.ts`'s `editImportRow`).
@@ -85,14 +62,19 @@ const EDIT_STATUS: Record<EditImportRowError, number> = {
 };
 
 /**
- * One row edit — include/exclude or a mapping override (ADR-4, FR7, T11).
+ * One row edit — include/exclude or a mapping override (ADR-4, FR7, T11) —
+ * or a bulk edit naming many ordinals at once (ADR-6, REQ-QUEUE-025),
+ * dispatched on which arm of `patchSchema`'s union the body parsed as.
  *
  * `ordinal` names the row; there is no file path or mapping id a caller could
  * use to touch a row this plan does not contain, because `editImportRow`
  * resolves everything else (the series a Sonarr override must stay inside,
  * the episode ids it must belong to) by re-reading the plan and the instance
  * — never by trusting what the request asserts beyond `ordinal` and the
- * literal fields of `ImportMapping`.
+ * literal fields of `ImportMapping`. The bulk arm carries no mapping at all —
+ * `editImportRows` only ever flips `included`, inside one transaction
+ * (`store.ts`'s `updateImportRows`), so there is nothing there to validate
+ * beyond the ordinals themselves.
  */
 export async function PATCH(request: Request, { params }: Params) {
   const unauthorized = await requireSession();
@@ -100,7 +82,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
   const { id } = await params;
 
-  let input: z.infer<typeof patchSchema>;
+  let input: ImportRowPatch;
   try {
     input = patchSchema.parse(await request.json());
   } catch {
@@ -111,17 +93,30 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ error: 'No such force-import plan.' }, { status: 404 });
   }
 
-  const patch: { included?: boolean; mapping?: ImportMapping } = {
-    included: input.included,
-    mapping: input.mapping,
-  };
+  let bulk: ImportBulkResult | undefined;
 
-  const result = await editImportRow(id, input.ordinal, patch, request.signal);
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: result.error },
-      { status: EDIT_STATUS[result.error] },
-    );
+  if ('ordinals' in input) {
+    const result = editImportRows(id, input.ordinals, input.included);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.error },
+        { status: EDIT_STATUS[result.error] },
+      );
+    }
+    bulk = { changed: result.changed, skipped: result.skipped };
+  } else {
+    const patch: { included?: boolean; mapping?: ImportMapping } = {
+      included: input.included,
+      mapping: input.mapping,
+    };
+
+    const result = await editImportRow(id, input.ordinal, patch, request.signal);
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.error },
+        { status: EDIT_STATUS[result.error] },
+      );
+    }
   }
 
   const plan = getImportPlan(id);
@@ -130,7 +125,12 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   return NextResponse.json(
-    { ...plan, importing: isImporting(id), writeEnabled: importWriteEnabled(plan.instanceKind) },
+    {
+      ...plan,
+      importing: isImporting(id),
+      writeEnabled: importWriteEnabled(plan.instanceKind),
+      ...(bulk ? { bulk } : {}),
+    },
     { status: 200, headers: { 'Cache-Control': 'no-store' } },
   );
 }

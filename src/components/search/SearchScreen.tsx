@@ -19,7 +19,8 @@ import {
   useSavedSearches,
   useSearch,
 } from '@/components/search/useSearch';
-import { useListKeyboard } from '@/components/useListKeyboard';
+import { useInspectorExpanded } from '@/components/useInspectorExpanded';
+import { useInspectorFollowsCursor, useListKeyboard } from '@/components/useListKeyboard';
 import {
   Callout, EmptyState, KeyboardHints, ScreenHead, ToastStack, useToasts,
 } from '@/components/ui';
@@ -54,6 +55,7 @@ const HINTS: Array<[string[], string]> = [
   [['/'], 'filter'],
   [['j', 'k'], 'move'],
   [['enter'], 'inspect'],
+  [['e'], 'expand'],
   [['esc'], 'close'],
   [['?'], 'all shortcuts'],
 ];
@@ -137,23 +139,32 @@ export default function SearchScreen({ initialQuery = '' }: { initialQuery?: str
     setOpenGuid(visible[index]?.guid ?? null);
   }, [visible]);
 
-  // One Escape does one thing. With no multi-select on this screen, closing the
-  // inspector is the only thing it has to do.
+  const { expanded, setExpanded, toggle: toggleExpanded } = useInspectorExpanded();
+
+  // One Escape does one thing. With no multi-select on this screen that is
+  // collapsing an expanded inspector, then closing it (ADR-1).
   const onEscape = useCallback(() => {
     if (openGuid === null) return false;
+    if (expanded) {
+      setExpanded(false);
+      return true;
+    }
     setOpenGuid(null);
     return true;
-  }, [openGuid]);
+  }, [openGuid, expanded, setExpanded]);
 
   const { cursor, setCursor } = useListKeyboard({
     count: visible.length,
     onOpen,
     onEscape,
+    onToggleExpand: openGuid !== null ? toggleExpanded : undefined,
     searchRef: queryRef,
     // The confirmation owns the keyboard while it is up: j/k moving a cursor
     // behind a dialog is how the wrong release gets grabbed.
     enabled: grabbing === null,
   });
+
+  useInspectorFollowsCursor(cursor, openRelease ? openGuid : null, (i) => visible[i]?.guid, setOpenGuid);
 
   const savedSearches = saved.data ?? EMPTY_SAVED;
   const selectedSaved = savedId
@@ -329,7 +340,11 @@ export default function SearchScreen({ initialQuery = '' }: { initialQuery?: str
     && !search.resolution.runnable;
 
   return (
-    <main className={`main${openRelease ? ' has-inspector' : ''}`} id="main" tabIndex={-1}>
+    <main
+      className={`main${openRelease ? ' has-inspector' : ''}${openRelease && expanded ? ' is-expanded' : ''}`}
+      id="main"
+      tabIndex={-1}
+    >
       <div className="content">
         <ScreenHead
           title="Indexer Search"
@@ -473,6 +488,8 @@ export default function SearchScreen({ initialQuery = '' }: { initialQuery?: str
           destinations={destinations}
           onClose={() => setOpenGuid(null)}
           onGrab={() => setGrabbing(openRelease)}
+          expanded={expanded}
+          onToggleExpand={toggleExpanded}
         />
       ) : null}
 

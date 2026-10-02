@@ -725,6 +725,27 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
     await page.click('.modal__foot .btn-ghost');
   });
 
+  it('Overview has zero violations with the inspector expanded, and its control states it', async () => {
+    await openOverview();
+    await page.click('.qgrid__body-row >> nth=0');
+    await page.waitForSelector('.inspector[data-expanded="false"]');
+    const control = page.locator('.inspector__expand');
+    expect(await control.getAttribute('aria-pressed')).toBe('false');
+
+    await page.keyboard.press('e');
+    await page.waitForSelector('.inspector[data-expanded="true"]');
+    expect(await control.getAttribute('aria-pressed')).toBe('true');
+    // Still a column beside the list: no dialog role, no focus trap to escape.
+    expect(await page.locator('[role="dialog"]').count()).toBe(0);
+    await scan('Overview (inspector expanded)');
+
+    // Collapse, then close — and leave the preference collapsed for the rest.
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.inspector[data-expanded="false"]');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.inspector').count()).toBe(0);
+  });
+
   it('Overview has zero violations with the setup nudge, which names what is missing', async () => {
     // Sonarr and Radarr are registered; Prowlarr is not seeded until the search
     // scans below. That window is the only place in this suite where the nudge
@@ -1491,6 +1512,18 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
       await page.click('[aria-label="Keyboard shortcuts (?)"]');
       await page.waitForSelector('.shortcuts');
       await scan('Shortcut reference');
+      // The range keys and the expand key are listed, each with its keys.
+      const rows = await page.locator('.shortcuts__row').allTextContents();
+      for (const binding of [
+        'Extend the selection down one row',
+        'Extend the selection up one row',
+        'Select from the anchor to the cursor',
+        'Select from the anchor to the clicked row',
+        'Expand or collapse the open inspector',
+        'Collapse an expanded inspector, then close it',
+      ]) {
+        expect(rows.some((row) => row.includes(binding)), binding).toBe(true);
+      }
       await page.keyboard.press('Escape');
       await expect.poll(() => page.locator('.shortcuts').count()).toBe(0);
     });
@@ -1592,6 +1625,18 @@ describe('WCAG AA', { timeout: 60_000 }, () => {
       await page.waitForSelector('text=would replace a file');
       await page.waitForSelector('table[role="grid"]');
       await scan('Force import (review)');
+    });
+
+    it('Force import has zero violations with the bulk-action group and its outcome line', async () => {
+      await openForceImport();
+      const group = page.locator('[role="group"][aria-label="Bulk actions"]');
+      expect(await group.count()).toBe(1);
+      await group.locator('button', { hasText: 'Include all replacements' }).click();
+      await page.waitForSelector('.bulk-include__outcome .callout');
+      // Said once, through the screen's polite region — not by a second live region.
+      await expect.poll(() => page.locator('main [role="status"][aria-live="polite"]').filter({ hasText: 'now included' }).count())
+        .toBe(1);
+      await scan('Force import (bulk group, outcome)');
     });
 
     it('Force import has zero violations in the typed confirmation, in all three states', async () => {

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   IMPORT_PLAN_TTL_MS,
+  type ImportBulkSkip,
   type ImportMapping,
   type ImportPlan,
   type ImportPlanPhase,
@@ -80,6 +81,12 @@ export interface ImportPlanInput {
 /** Why `updateImportRow` declined an edit. Typed, never thrown. */
 export type ImportRowUpdateError = 'plan-not-ready' | 'row-not-found' | 'missing-mapping';
 export type ImportRowUpdateResult = { ok: true } | { ok: false; error: ImportRowUpdateError };
+
+/** Why `updateImportRows` declined a bulk edit. Narrower than the single-row set (ADR-6): a bulk edit never fails on a missing mapping — it skips instead. */
+export type ImportRowsUpdateError = 'plan-not-ready' | 'row-not-found';
+export type ImportRowsUpdateResult =
+  | { ok: true; changed: number; skipped: ImportBulkSkip[] }
+  | { ok: false; error: ImportRowsUpdateError };
 
 function parseJson<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -252,6 +259,73 @@ export function updateImportRow(
     }
 
     return { ok: true };
+  })();
+}
+
+/**
+ * Sets inclusion on many rows in one transaction (ADR-6, REQ-QUEUE-025) —
+ * "Include all" / "Exclude all" / "Include all replacements" and range
+ * inclusion all land here, differing only in which ordinals are gathered
+ * before the call. Never touches `mapping` or `mapping_source`.
+ *
+ * All-or-nothing on the request itself: the phase/expiry check and the
+ * existence check both happen before any row is written, so an unready plan
+ * or an unknown ordinal leaves every row exactly as it was. Past that gate,
+ * a row that cannot be included (no mapping) is not an error — it is skipped
+ * and named in the result, so "Include all" on a plan with one unmapped row
+ * still includes the other nine.
+ *
+ * The expiry check is explicit here rather than left to the lazy sweep in
+ * `getImportPlan`: that sweep only runs on a read, so a bulk edit arriving
+ * after `expires_at` but before any poll re-reads the plan would otherwise
+ * write through a plan that should already be `expired` (ADR-6's "closes the
+ * lazy-TTL gap").
+ */
+export function updateImportRows(
+  planId: string,
+  ordinals: number[],
+  included: boolean,
+): ImportRowsUpdateResult {
+  const db = getDb();
+  return db.transaction((): ImportRowsUpdateResult => {
+    const plan = db.prepare('SELECT phase, expires_at FROM import_plan WHERE id = ?').get(planId) as
+      { phase: ImportPlanPhase; expires_at: string } | undefined;
+    if (!plan || plan.phase !== 'ready' || Date.parse(plan.expires_at) <= Date.now()) {
+      return { ok: false, error: 'plan-not-ready' };
+    }
+
+    const placeholders = ordinals.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT ordinal, mapping_json, included FROM import_plan_row WHERE plan_id = ? AND ordinal IN (${placeholders})`,
+    ).all(planId, ...ordinals) as { ordinal: number; mapping_json: string | null; included: number }[];
+
+    const byOrdinal = new Map(rows.map((row) => [row.ordinal, row]));
+    for (const ordinal of ordinals) {
+      if (!byOrdinal.has(ordinal)) return { ok: false, error: 'row-not-found' };
+    }
+
+    const update = db.prepare(
+      'UPDATE import_plan_row SET included = ? WHERE plan_id = ? AND ordinal = ?',
+    );
+    const skipped: ImportBulkSkip[] = [];
+    let changed = 0;
+
+    for (const ordinal of ordinals) {
+      const row = byOrdinal.get(ordinal)!;
+      const hasMapping = row.mapping_json !== null;
+      const alreadyIncluded = row.included === 1;
+
+      if (included && !hasMapping) {
+        skipped.push({ ordinal, reason: 'no-target' });
+        continue;
+      }
+      if (alreadyIncluded === included) continue;
+
+      update.run(included ? 1 : 0, planId, ordinal);
+      changed += 1;
+    }
+
+    return { ok: true, changed, skipped };
   })();
 }
 

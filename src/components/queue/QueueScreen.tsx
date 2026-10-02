@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SetupNudge } from '@/components/FirstRun';
+import { SelectionAnnouncer, selectionSentence, useAnnouncer } from '@/components/SelectionAnnouncer';
 import Icon from '@/components/Icon';
 import DegradedBanner from '@/components/queue/DegradedBanner';
 import InstanceHealthRail from '@/components/queue/InstanceHealthRail';
@@ -11,7 +12,8 @@ import QueueInspector from '@/components/queue/QueueInspector';
 import QueueTable, { filterRecords, sortRecords, type Sort } from '@/components/queue/QueueTable';
 import RemovalPreview from '@/components/queue/RemovalPreview';
 import { DEFAULT_REFRESH_MS, useQueue, useRemoveFromQueue } from '@/components/queue/useQueue';
-import { useListKeyboard, useSelection } from '@/components/useListKeyboard';
+import { useInspectorExpanded } from '@/components/useInspectorExpanded';
+import { useInspectorFollowsCursor, useListKeyboard, useSelection } from '@/components/useListKeyboard';
 import {
   BulkBar, Callout, EmptyState, KeyboardHints, ScreenHead, SearchField, StatusBadge,
   ToastStack, useToasts,
@@ -33,7 +35,9 @@ const HINTS: Array<[string[], string]> = [
   [['/'], 'filter'],
   [['j', 'k'], 'move'],
   [['space'], 'select'],
+  [['shift', 'j', 'k'], 'extend'],
   [['enter'], 'inspect'],
+  [['e'], 'expand'],
   [['esc'], 'close'],
   [['?'], 'all shortcuts'],
 ];
@@ -73,13 +77,19 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
   });
   const instances = useMemo(() => health.data?.instances ?? [], [health.data]);
   const remove = useRemoveFromQueue();
-  const { selected, toggle, clear, reconcile } = useSelection();
+  const { selected, toggle, clear, reconcile, rangeTo, extend } = useSelection();
+  const { message, announce } = useAnnouncer();
+  const { expanded, setExpanded, toggle: toggleExpanded } = useInspectorExpanded();
 
   const records = useMemo(() => queue.data?.records ?? [], [queue.data]);
   const visible = useMemo(
     () => sortRecords(filterRecords(records, query), sort),
     [records, query, sort],
   );
+  // What a range gesture spans: the rows as rendered, in render order — the
+  // array the cursor indexes. Never `records`, or a range sweeps in rows the
+  // filter is hiding (REQ-QUEUE-024).
+  const displayedIds = useMemo(() => visible.map((r) => r.id), [visible]);
 
   // Selection and the open inspector both key off record ids, so both have to be
   // reconciled against what the latest read actually returned. A selection that
@@ -109,13 +119,37 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
     if (record) toggle(record.id);
   }, [visible, toggle]);
 
-  // One Escape does one thing: it closes the inspector if one is open, and only
-  // otherwise falls through to clearing the selection.
+  const inspectorOpen = openRecord !== null;
+  const isExpanded = inspectorOpen && expanded;
+
+  // One Escape steps back one level: an expanded inspector collapses, an open
+  // one closes, and only otherwise does the press fall through to clearing the
+  // selection.
   const onEscape = useCallback(() => {
+    if (isExpanded) {
+      setExpanded(false);
+      return true;
+    }
     if (openId === null) return false;
     setOpenId(null);
     return true;
-  }, [openId]);
+  }, [isExpanded, openId, setExpanded]);
+
+  // Shift+J/K: the cursor already moved `from` → `to`; the selection follows.
+  const onExtend = useCallback((from: number, to: number) => {
+    const fromId = displayedIds[from];
+    const toId = displayedIds[to];
+    if (fromId === undefined || toId === undefined) return;
+    const outcome = extend(displayedIds, fromId, toId);
+    if (outcome) announce(selectionSentence(outcome.total));
+  }, [announce, displayedIds, extend]);
+
+  // Shift+Space: anchor → cursor.
+  const onSelectRange = useCallback((index: number) => {
+    const id = displayedIds[index];
+    if (id === undefined) return;
+    announce(selectionSentence(rangeTo(displayedIds, id).total));
+  }, [announce, displayedIds, rangeTo]);
 
   const { cursor, setCursor } = useListKeyboard({
     count: visible.length,
@@ -123,11 +157,26 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
     onOpen,
     onEscape,
     onClearSelection: clear,
+    onExtend,
+    onSelectRange,
+    onToggleExpand: inspectorOpen ? toggleExpanded : undefined,
     searchRef,
     // The preview owns the keyboard while it is up — j/k moving a cursor behind
     // a confirmation dialog is how the wrong rows get removed.
     enabled: preview === null,
   });
+
+  // The checkbox: a plain click toggles the row and makes it the anchor,
+  // shift+click selects anchor → row. Either way the cursor lands on the row,
+  // so a following Shift+J continues from where the operator clicked.
+  const onToggleRow = useCallback((id: string, shift: boolean) => {
+    if (shift) announce(selectionSentence(rangeTo(displayedIds, id).total));
+    else toggle(id);
+    const index = displayedIds.indexOf(id);
+    if (index >= 0) setCursor(index);
+  }, [announce, displayedIds, rangeTo, setCursor, toggle]);
+
+  useInspectorFollowsCursor(cursor, inspectorOpen ? openId : null, (i) => displayedIds[i], setOpenId);
 
   const retry = useMutation({
     mutationFn: (instanceId: string) => api.retryInstance(instanceId),
@@ -198,7 +247,11 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
   const attention = records.filter(needsAttention).length;
 
   return (
-    <main className={`main${openRecord ? ' has-inspector' : ''}`} id="main" tabIndex={-1}>
+    <main
+      className={`main${openRecord ? ' has-inspector' : ''}${isExpanded ? ' is-expanded' : ''}`}
+      id="main"
+      tabIndex={-1}
+    >
       <div className="content">
         <ScreenHead
           title="Overview"
@@ -287,7 +340,7 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
                 cursor={cursor}
                 onCursorChange={setCursor}
                 selected={selected}
-                onToggleSelect={toggle}
+                onToggleSelect={onToggleRow}
                 onOpen={onOpen}
                 pending={pending}
                 sort={sort}
@@ -317,6 +370,8 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
         <QueueInspector
           record={openRecord}
           onClose={() => setOpenId(null)}
+          expanded={isExpanded}
+          onToggleExpand={toggleExpanded}
           onRemove={() => setPreview({ records: [openRecord] })}
           onRemoveAndBlocklist={() => setPreview({
             records: [openRecord],
@@ -336,6 +391,10 @@ export default function QueueScreen({ refreshMs = DEFAULT_REFRESH_MS }: QueueScr
           onConfirm={confirmRemoval}
         />
       ) : null}
+
+      {/* Always mounted: a live region inserted with its first message says
+          nothing (REQ-A11Y-011). */}
+      <SelectionAnnouncer message={message} />
 
       <ToastStack toasts={toasts} />
     </main>

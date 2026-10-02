@@ -35,6 +35,8 @@ export interface ReleaseInspectorProps {
   onClose: () => void;
   /** Opens the confirmation. The grab itself never starts from this panel. */
   onGrab: () => void;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 export default function ReleaseInspector({
@@ -42,6 +44,8 @@ export default function ReleaseInspector({
   destinations,
   onClose,
   onGrab,
+  expanded,
+  onToggleExpand,
 }: ReleaseInspectorProps) {
   const [target, setTarget] = useState<string>(() => destinations[0]?.instanceId ?? '');
   const evaluate = useEvaluateRelease();
@@ -62,6 +66,8 @@ export default function ReleaseInspector({
       eyebrow={`${release.indexer} · ${release.protocol}`}
       title={release.title}
       onClose={onClose}
+      expanded={expanded}
+      onToggleExpand={onToggleExpand}
       footer={
         <button type="button" className="btn btn-primary btn-sm" onClick={onGrab}>
           <Icon name="down" size={12} />Grab into…

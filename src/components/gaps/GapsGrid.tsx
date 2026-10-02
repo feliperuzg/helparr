@@ -194,7 +194,9 @@ export interface GapsGridProps {
   /** The id of the gap the inspector is showing, if any. */
   openGapId: string | null;
   selected: ReadonlySet<string>;
-  onToggleSelect: (id: string) => void;
+  /** `shift` is a shift+click — the screen turns it into a range from the
+   *  anchor over the listed rows (REQ-QUEUE-024). */
+  onToggleSelect: (id: string, shift: boolean) => void;
   /** Selects or clears every gap currently listed — never the unfiltered set. */
   onToggleAll: () => void;
   /**
@@ -476,7 +478,7 @@ interface RowProps {
   isSelected: boolean;
   onCursorChange: (index: number) => void;
   onOpen: (index: number) => void;
-  onToggleSelect: (id: string) => void;
+  onToggleSelect: (id: string, shift: boolean) => void;
 }
 
 function Row({
@@ -534,7 +536,11 @@ function Row({
           type="checkbox"
           className="checkbox"
           checked={isSelected}
-          onChange={() => onToggleSelect(gap.id)}
+          // No text selection on shift+click, and focus stays off the input —
+          // a focused input counts as typing, which would mute j/k after it.
+          onMouseDown={(e) => e.preventDefault()}
+          // `change` is dispatched from the click, so the shift key is on it.
+          onChange={(e) => onToggleSelect(gap.id, (e.nativeEvent as MouseEvent).shiftKey)}
           aria-label={`Select ${gap.groupTitle} ${gap.itemCode}`}
           tabIndex={-1}
         />

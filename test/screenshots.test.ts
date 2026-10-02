@@ -620,6 +620,23 @@ describe('screenshots', { timeout: 300_000 }, () => {
       expect(await capture('queue-cause', TRIAGE_OUT_DIR)).toBeGreaterThan(0);
     });
 
+    /*
+     * queue-triage-ergonomics: the same evidence with room to read it — the
+     * inspector expanded beside the list, never over it.
+     */
+    it('captures the cause inspector expanded', async () => {
+      await openRejectedInspector();
+      await page.click('.inspector button:has-text("Compare with the files on disk")');
+      await page.locator('.inspector :text("Candidate vs. on disk")').first().waitFor({ timeout: 60_000 });
+      await page.keyboard.press('e');
+      await page.waitForSelector('.inspector[data-expanded="true"]');
+      expect(await capture('queue-cause-expanded', TRIAGE_OUT_DIR)).toBeGreaterThan(0);
+      // Collapsed again: the preference is per browser, and every capture
+      // after this one is of the default width.
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('.inspector[data-expanded="false"]');
+    });
+
     it('captures a force-import preview with a replacement row', async () => {
       await openForceImport();
       await page.waitForSelector('text=would replace a file');

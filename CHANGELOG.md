@@ -3,6 +3,34 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org/),
 and a `0.x` means the public surface can still move between minors.
 
+## [Unreleased]
+
+Queue-triage ergonomics: more room to read the evidence, and selection that
+works on more than one row at a time.
+
+### Added
+
+- **Expandable inspector** — `e` or the header control widens the open
+  inspector to 560 px beside the list, never over it; the list keeps at least
+  360 px. The width is remembered per browser. Esc collapses an expanded panel
+  before it closes it, and the panel follows the cursor as `j`/`k` move, at
+  either width.
+- **Range selection** — shift+click, Shift+J/K (or Shift+↓/↑) and Shift+Space
+  select from the anchor to the target on Overview, Gaps, Rename (the picker
+  and the plan grid) and Force import. The range covers the rows on screen
+  only, every row in it takes the anchor's state, and group headings are never
+  counted. Each gesture is announced to screen readers with the new total.
+- **Bulk include on Force import** — "Include all", "Exclude all" and "Include
+  all replacements (N)" act on every candidate in one request, all or nothing.
+  Candidates with no target are skipped by name ("Included 1 · skipped 1 — no
+  target") rather than silently, and a failed request leaves every row as it
+  was.
+
+### Fixed
+
+- The keyboard-shortcuts dialog body can be scrolled from the keyboard when it
+  is taller than the viewport.
+
 ## [0.2.1] — 2026-10-02
 
 ### Fixed

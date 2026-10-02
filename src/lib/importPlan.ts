@@ -124,3 +124,33 @@ export const IMPORT_PLAN_TTL_MS = 5 * 60 * 1000;
 export function includedCount(plan: Pick<ImportPlan, 'rows'>): number {
   return plan.rows.filter((row) => row.included).length;
 }
+
+/* ── Bulk edit (ADR-6, REQ-QUEUE-025) ────────────────────────────────────── */
+
+/** The bulk-PATCH request body's second arm — every named ordinal to one state. */
+export interface ImportBulkEdit {
+  ordinals: number[];
+  included: boolean;
+}
+
+/** Why one ordinal in a bulk edit was left untouched. Only reason today: no mapping to include it with. */
+export interface ImportBulkSkip {
+  ordinal: number;
+  reason: 'no-target';
+}
+
+/** What a bulk edit answers with, alongside the whole refreshed plan. */
+export interface ImportBulkResult {
+  changed: number;
+  skipped: ImportBulkSkip[];
+}
+
+/** Ordinals of every row flagged as replacing an existing file — "Include all replacements"'s source set. */
+export function replacementOrdinals(rows: readonly Pick<ImportPlanRow, 'ordinal' | 'replacesExisting'>[]): number[] {
+  return rows.filter((row) => row.replacesExisting !== null).map((row) => row.ordinal);
+}
+
+/** Every row's ordinal, in order — "Include all" / "Exclude all"'s source set. */
+export function allOrdinals(rows: readonly Pick<ImportPlanRow, 'ordinal'>[]): number[] {
+  return rows.map((row) => row.ordinal);
+}

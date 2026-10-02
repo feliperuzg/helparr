@@ -30,9 +30,14 @@ const LISTS: Row[] = [
   [['k', '↑'], 'Move the cursor up one row'],
   [['Home', 'End'], 'Jump to the first / last row'],
   [['PgUp', 'PgDn'], 'Move ten rows at once'],
-  [['Space'], 'Toggle the row under the cursor *'],
+  [['Space'], 'Toggle the row under the cursor and make it the range anchor *'],
+  [['Shift', 'J', '↓'], 'Extend the selection down one row *'],
+  [['Shift', 'K', '↑'], 'Extend the selection up one row *'],
+  [['Shift', 'Space'], 'Select from the anchor to the cursor *'],
+  [['Shift', 'click'], 'Select from the anchor to the clicked row *'],
   [['Enter'], 'Open the row — inspector or detail; on Unmapped, its indexer search'],
-  [['Esc'], 'Close the open inspector'],
+  [['e'], 'Expand or collapse the open inspector'],
+  [['Esc'], 'Collapse an expanded inspector, then close it'],
 ];
 
 export default function ShortcutsDialog({ onClose }: { onClose: () => void }) {
@@ -41,6 +46,9 @@ export default function ShortcutsDialog({ onClose }: { onClose: () => void }) {
       title="Keyboard shortcuts"
       onClose={onClose}
       labelledBy="shortcuts-title"
+      // Taller than a short viewport, and nothing in it but the Close button
+      // in the footer: the body has to be a stop of its own to be scrolled.
+      focusableBody
       // A real focusable dismissal, not just Escape and the backdrop: this is
       // the one dialog an operator opens *because* they are not sure which keys
       // work, so it cannot be one that only closes if you already know.
@@ -49,10 +57,10 @@ export default function ShortcutsDialog({ onClose }: { onClose: () => void }) {
       <div className="shortcuts">
         <Section title="Everywhere" rows={EVERYWHERE} />
 
-        {/* Two sections rather than one flat list. Overview's queue table and
-            Settings' instance cards do not use the list keyboard layer, so they
-            are correctly absent here rather than padded in for symmetry. */}
-        <Section title="Any list screen (Overview, Search, Gaps, Rename, Unmapped)" rows={LISTS} />
+        {/* Two sections rather than one flat list. Activity and Settings do not
+            use the list keyboard layer, so they are correctly absent here
+            rather than padded in for symmetry. */}
+        <Section title="Any list screen (Overview, Search, Gaps, Rename, Force import, Unmapped)" rows={LISTS} />
 
         {/* The asterisk is load-bearing. The bindings are consistent across
             every list screen with exactly one exception, and a reference that
@@ -60,7 +68,8 @@ export default function ShortcutsDialog({ onClose }: { onClose: () => void }) {
             the only thing an operator could get caught by. */}
         <p className="shortcuts__note subtle">
           * Search and Unmapped have no bulk selection — <kbd className="kbd">Space</kbd>
-          scrolls there instead, the same as on any page.
+          scrolls there instead, the same as on any page. On Force import, selecting a
+          candidate includes it in the import.
         </p>
         <p className="shortcuts__note subtle">
           All of the above is suppressed while a dialog is open — the dialog owns the

@@ -43,6 +43,10 @@ const paths = {
   /* Activity — a clock with a rewind arrow. The operation log is history, not
      live telemetry, and `clock` alone already means "waiting" on this screen. */
   history: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 8v4.5l3 1.8" /></>,
+  /* Inspector width toggle (REQ-QUEUE-011) — diagonal arrows pointing out to
+     widen, in to restore. A pair, so the drawn state matches the label. */
+  expand: <><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="m21 3-7 7" /><path d="m3 21 7-7" /></>,
+  collapse: <><path d="M4 14h6v6" /><path d="M20 10h-6V4" /><path d="m14 10 7-7" /><path d="m3 21 7-7" /></>,
 } satisfies Record<string, ReactElement>;
 
 export type IconName = keyof typeof paths;

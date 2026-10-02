@@ -7,6 +7,7 @@ import {
   Callout, ChipGroup, EmptyState, FilterChip, SearchField,
 } from '@/components/ui';
 import { useRenameTitles } from '@/components/rename/useRenameTitles';
+import { applyRange, planRange } from '@/lib/rangeSelection';
 import type { RenameTitleOption } from '@/lib/types';
 
 /**
@@ -47,6 +48,12 @@ export default function ScopePicker({
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<Source>('all');
+  /**
+   * The shift+click anchor (ADR-3, ADR-5): the title last ticked or unticked
+   * by a plain click. An id, so a filter change keeps it; a filter that hides
+   * it degrades the next shift+click to a plain toggle.
+   */
+  const [anchor, setAnchor] = useState<string | null>(null);
 
   const read = useRenameTitles();
   const titles = useMemo(() => read.data?.titles ?? [], [read.data]);
@@ -74,6 +81,23 @@ export default function ScopePicker({
   );
 
   const allShownSelected = shown.length > 0 && shown.every((title) => selected.has(title.id));
+
+  /**
+   * A title's checkbox. With Shift, every title between the anchor and this
+   * one takes the anchor's state — over `shown`, the rows actually rendered,
+   * so nothing a filter or the render cap hides is swept in (REQ-QUEUE-024).
+   */
+  function toggleTitle(id: string, shift: boolean) {
+    const plan = shift
+      ? planRange(shown.map((title) => title.id), anchor, id, (key) => selected.has(key))
+      : null;
+    if (plan === null) {
+      setAnchor(id);
+      onToggle(id);
+      return;
+    }
+    onReplace([...applyRange(selected, plan.ids, plan.state)]);
+  }
 
   function toggleShown() {
     const ids = new Set(selected);
@@ -189,7 +213,12 @@ export default function ScopePicker({
                         type="checkbox"
                         className="checkbox"
                         checked={selected.has(title.id)}
-                        onChange={() => onToggle(title.id)}
+                        // No text selection on shift+click, no focus jump.
+                        onMouseDown={(e) => e.preventDefault()}
+                        onChange={(e) => toggleTitle(
+                          title.id,
+                          (e.nativeEvent as MouseEvent).shiftKey,
+                        )}
                       />
                       <Icon
                         name={title.kind === 'series' ? 'tv' : 'film'}

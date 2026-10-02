@@ -202,6 +202,9 @@ export function FilterChip({
 
 /* ---------------------------------------------------------------------------
    Inspector — detail opens beside the list, never over it (DESIGN.md §5).
+   Expanding widens the column; it never becomes a modal (REQ-QUEUE-011). The
+   width itself is the screen's: it toggles `is-expanded` on `.main`, since the
+   grid that sizes this panel lives there, not here.
    ------------------------------------------------------------------------- */
 export function Inspector({
   eyebrow,
@@ -209,6 +212,8 @@ export function Inspector({
   onClose,
   footer,
   label = 'Queue item detail',
+  expanded = false,
+  onToggleExpand,
   children,
 }: {
   eyebrow: ReactNode;
@@ -217,15 +222,36 @@ export function Inspector({
   footer?: ReactNode;
   /** What the panel is showing. Two panels on one screen must not share a name. */
   label?: string;
+  /** Whether the panel is at its expanded width. Drives the toggle's state only. */
+  expanded?: boolean;
+  /** Supplying this is what renders the expand control. */
+  onToggleExpand?: () => void;
   children: ReactNode;
 }) {
   return (
-    <aside className="inspector" aria-label={label}>
+    <aside className="inspector" aria-label={label} data-expanded={expanded ? 'true' : 'false'}>
       <div className="inspector__head">
         <div style={{ minWidth: 0, flex: 1 }}>
           <div className="inspector__eyebrow">{eyebrow}</div>
           <div className="inspector__title">{title}</div>
         </div>
+        {/* Hidden by CSS at ≤860px, where the panel is already a full-width
+            sheet and there is nothing left to expand into. */}
+        {onToggleExpand ? (
+          <button
+            type="button"
+            className="icon-btn inspector__expand"
+            onClick={onToggleExpand}
+            // One name, state in `aria-pressed`: the toggle-button pattern.
+            // A label that also flipped would be announced as "Collapse
+            // inspector, pressed" — two signals saying opposite things.
+            aria-pressed={expanded}
+            aria-label="Expand inspector (e)"
+            title={expanded ? 'Collapse inspector (e)' : 'Expand inspector (e)'}
+          >
+            <Icon name={expanded ? 'collapse' : 'expand'} size={14} />
+          </button>
+        ) : null}
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close inspector (Esc)">
           <Icon name="x" size={14} />
         </button>
@@ -328,12 +354,19 @@ export function Modal({
   footer,
   children,
   labelledBy = 'modal-title',
+  focusableBody = false,
 }: {
   title: ReactNode;
   onClose: () => void;
   footer?: ReactNode;
   children: ReactNode;
   labelledBy?: string;
+  /**
+   * For a read-only body long enough to scroll: with nothing focusable inside
+   * it, the overflow is unreachable without a pointer (WCAG 2.1.1). Opt-in,
+   * because a body that holds its own controls would gain a stop before them.
+   */
+  focusableBody?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -390,7 +423,7 @@ export function Modal({
         <div className="modal__head">
           <h2 className="modal__title" id={labelledBy}>{title}</h2>
         </div>
-        <div className="modal__body">{children}</div>
+        <div className="modal__body" tabIndex={focusableBody ? 0 : undefined}>{children}</div>
         {footer ? <div className="modal__foot">{footer}</div> : null}
       </div>
     </div>

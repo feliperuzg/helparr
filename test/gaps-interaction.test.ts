@@ -246,6 +246,52 @@ describe('gaps interaction', { timeout: 120_000 }, () => {
     await scopeTo('All');
   });
 
+  /* ── Range selection (queue-triage-ergonomics AC8, AC9) ─────────────────── */
+
+  it('ranges across a group heading with shift+click and Shift+J, counting rows only', async () => {
+    await scopeTo('Sonarr');
+    await expect.poll(() => page.locator('.ggrid__body-row').count()).toBe(WANTED.length);
+    const check = (code: string) => page.locator('.ggrid__body-row', { hasText: code }).locator('input[type="checkbox"]');
+
+    // S01E02 → S02E01 steps over the Silo heading: three rows, no heading.
+    await check('S01E02').click();
+    await check('S02E01').click({ modifiers: ['Shift'] });
+    await expect.poll(() => page.textContent('.bulkbar__count')).toBe('3 gaps selected');
+    expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+
+    // The click left the cursor on S02E01, so Shift+J takes S02E02 as well.
+    expect(await cursorCode()).toBe('S02E01');
+    await page.keyboard.press('Shift+J');
+    await expect.poll(() => page.textContent('.bulkbar__count')).toBe('4 gaps selected');
+    await expect.poll(() => page.locator('main [role="status"]').filter({ hasText: 'selected' }).textContent())
+      .toContain('4 gaps selected');
+
+    await page.click('.bulkbar .btn-ghost');
+    await scopeTo('All');
+  });
+
+  it('keeps the inspector on the cursor row as j moves, expanded or not', async () => {
+    await scopeTo('Sonarr');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.inspector');
+    expect(await page.textContent('.inspector__title')).toBe('Reacher — S01E01');
+
+    await page.keyboard.press('j');
+    await expect.poll(() => page.textContent('.inspector__title')).toBe('Reacher — S01E02');
+
+    await page.keyboard.press('e');
+    await expect.poll(() => page.locator('.inspector').getAttribute('data-expanded')).toBe('true');
+    await page.keyboard.press('j');
+    await expect.poll(() => page.textContent('.inspector__title')).toBe('Reacher — S01E03');
+
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.inspector').getAttribute('data-expanded')).toBe('false');
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.inspector').count()).toBe(0);
+    await scopeTo('All');
+  });
+
   /* ── The bulk confirmation (AC7, AC9) ───────────────────────────────────── */
 
   it('carries the selected count from the bulk bar into the dialog and the command', async () => {

@@ -26,10 +26,14 @@ export interface RenameInspectorProps {
   /** Absent once the plan can no longer be edited. */
   onSetExcluded?: (rowIds: string[], excluded: boolean) => void;
   busy?: boolean;
+  /** Whether the panel is at its expanded width (ADR-1). */
+  expanded?: boolean;
+  /** Renders the panel's expand control; the `e` key calls the same thing. */
+  onToggleExpand?: () => void;
 }
 
 export default function RenameInspector({
-  row, mode, onClose, onSetExcluded, busy = false,
+  row, mode, onClose, onSetExcluded, busy = false, expanded = false, onToggleExpand,
 }: RenameInspectorProps) {
   const status = rowStatus(row, mode);
 
@@ -45,6 +49,8 @@ export default function RenameInspector({
       )}
       title={<span className="mono">{row.existingPath.split(/[\\/]/).pop()}</span>}
       onClose={onClose}
+      expanded={expanded}
+      onToggleExpand={onToggleExpand}
       footer={onSetExcluded ? (
         <button
           type="button"

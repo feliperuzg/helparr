@@ -29,7 +29,7 @@ import type {
   TestOutcome,
 } from './types';
 import type { DecisionComparison } from './decisions';
-import type { ImportMapping, ImportPlan } from './importPlan';
+import type { ImportBulkEdit, ImportBulkResult, ImportMapping, ImportPlan } from './importPlan';
 import type { UnmappedRead } from './unmapped';
 
 /**
@@ -142,6 +142,11 @@ export interface ImportPlanRead extends ImportPlan {
   importing: boolean;
   /** Whether helparr will send this instance kind's import at all (ADR-6) — Radarr stays read-only until T0's capture confirms its payload. */
   writeEnabled: boolean;
+}
+
+/** A bulk row edit's answer: the refreshed plan, plus what the edit changed and skipped (ADR-6). */
+export interface ImportBulkEditRead extends ImportPlanRead {
+  bulk: ImportBulkResult;
 }
 
 /** One `/manualimport`-resolved episode, as the series picker renders it. */
@@ -475,6 +480,14 @@ export const api = {
     body: { ordinal: number; included?: boolean; mapping?: ImportMapping },
   ) =>
     request<ImportPlanRead>(`/api/import/plan/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  // Many rows to one state in one request — the bulk actions and range
+  // inclusion (ADR-6). All or nothing: a 4xx means no row changed.
+  bulkEditImportRows: (id: string, body: ImportBulkEdit) =>
+    request<ImportBulkEditRead>(`/api/import/plan/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),

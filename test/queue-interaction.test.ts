@@ -45,7 +45,17 @@ const BLOCKED: FakeQueueRecord = {
   episodes: [{ seasonNumber: 1, episodeNumber: 1 }],
 };
 
-const SONARR_QUEUE = [BLOCKED, ...fakeQueue(4, 2)];
+/**
+ * Enough rows for "row 3 to row 8" (queue-triage-ergonomics AC8), with one row
+ * a `Show.S01` filter hides sitting in the middle of them — the row a range
+ * computed over the unfiltered list would wrongly sweep in (AC13).
+ */
+const ODD_ONE: FakeQueueRecord = {
+  ...fakeQueue(1, 5)[0],
+  title: 'Odd.One.Out.S01E05.1080p.WEB-DL',
+  series: { title: 'Odd' },
+};
+const SONARR_QUEUE = [BLOCKED, ...fakeQueue(3, 2), ODD_ONE, ...fakeQueue(5, 6)];
 const RADARR_QUEUE = fakeQueue(2, 20);
 const TOTAL_ROWS = SONARR_QUEUE.length + RADARR_QUEUE.length;
 
@@ -58,6 +68,27 @@ let radarr: FakeArr;
 
 const rows = () => page.locator('.qgrid__body-row');
 const cursorText = async () => (await page.locator('.qgrid__body-row.is-cursor').textContent()) ?? '';
+const selectedRows = () => page.locator('.qgrid__body-row[aria-selected="true"]');
+const checkbox = (row: number) => rows().nth(row).locator('input[type="checkbox"]');
+/** The episode code each row carries, in display order — unique per fixture row. */
+const codes = () => rows().evaluateAll((els) => els.map((el) => /S01E\d\d/.exec(el.textContent ?? '')?.[0] ?? ''));
+const announcer = () => page.locator('main [role="status"][aria-live="polite"]').filter({ hasText: 'selected' });
+const inspectorTitle = () => page.locator('.inspector .inspector__title').textContent();
+
+/**
+ * A box's width once it stops moving. `.main` animates its columns, so a read
+ * taken straight after opening or expanding lands somewhere mid-transition.
+ */
+async function settledWidth(selector: string): Promise<number> {
+  let last = -1;
+  for (let i = 0; i < 40; i += 1) {
+    const width = (await page.locator(selector).boundingBox())?.width ?? 0;
+    if (width > 0 && width === last) return width;
+    last = width;
+    await page.waitForTimeout(50);
+  }
+  return last;
+}
 
 async function openOverview() {
   await page.goto(app.origin);
@@ -193,5 +224,119 @@ describe('queue interaction', { timeout: 60_000 }, () => {
     expect(await page.locator('.qgrid__body-row:has-text("Blocked.Import.S01E01")').count()).toBe(1);
 
     radarr.setMode('ok');
+  });
+  /* ── Range selection and the expandable inspector (queue-triage-ergonomics) ─ */
+
+  it('selects row 3 to row 8 with a click and a shift+click, and says so', async () => {
+    await checkbox(2).click();
+    await checkbox(7).click({ modifiers: ['Shift'] });
+
+    await page.waitForSelector('.bulkbar');
+    expect(await page.textContent('.bulkbar__count')).toBe('6 items selected');
+    const selected = await rows().evaluateAll((els) => els.map((el) => el.getAttribute('aria-selected') === 'true'));
+    expect(selected.map((on, i) => (on ? i : -1)).filter((i) => i >= 0)).toEqual([2, 3, 4, 5, 6, 7]);
+    await expect.poll(async () => (await announcer().textContent())?.trim()).toBe('6 items selected');
+
+    // The shift+click painted no text selection and left focus off the input,
+    // so the very next `j` is a command — the cursor followed the click to row 8.
+    expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+    expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('INPUT');
+    await page.keyboard.press('j');
+    expect(await cursorText()).toBe(await rows().nth(8).textContent());
+  });
+
+  it('never sweeps a row the filter hides into a range', async () => {
+    const order = await codes();
+    const odd = order.indexOf('S01E05');
+    const from = order[odd - 2];
+    const to = order[odd + 2];
+
+    await page.locator('.qgrid__body-row', { hasText: `Show.${from}` }).locator('input[type="checkbox"]').click();
+    await page.fill('#list-search', 'Show.S01');
+    await expect.poll(() => rows().count()).toBe(TOTAL_ROWS - 2);
+    await page.locator('.qgrid__body-row', { hasText: `Show.${to}` })
+      .locator('input[type="checkbox"]').click({ modifiers: ['Shift'] });
+    await expect.poll(() => page.textContent('.bulkbar__count')).toBe('4 items selected');
+
+    await page.fill('#list-search', '');
+    await expect.poll(() => rows().count()).toBe(TOTAL_ROWS);
+    expect(await selectedRows().count()).toBe(4);
+    expect(await page.locator('.qgrid__body-row', { hasText: 'Odd.One.Out' }).getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('extends with Shift+J and selects anchor to cursor with Shift+Space', async () => {
+    await page.keyboard.press(' ');
+    for (let i = 0; i < 5; i += 1) await page.keyboard.press('Shift+J');
+    await expect.poll(() => page.textContent('.bulkbar__count')).toBe('6 items selected');
+    expect(await cursorText()).toBe(await rows().nth(5).textContent());
+
+    // Escape clears; then Space anchors row 1, j×3 moves without selecting,
+    // and Shift+Space takes rows 1 to 4.
+    await page.keyboard.press('Escape');
+    await expect.poll(() => page.locator('.bulkbar').count()).toBe(0);
+    await page.keyboard.press('k');
+    await page.keyboard.press('k');
+    await page.keyboard.press('k');
+    await page.keyboard.press('k');
+    await page.keyboard.press(' ');
+    await page.keyboard.press('j');
+    await page.keyboard.press('j');
+    await page.keyboard.press('j');
+    expect(await selectedRows().count()).toBe(1);
+    await page.keyboard.press('Shift+Space');
+    await expect.poll(() => page.textContent('.bulkbar__count')).toBe('4 items selected');
+  });
+
+  it('leaves the shifted keys to the filter while it has focus', async () => {
+    await page.keyboard.press('/');
+    await page.keyboard.press('Shift+J');
+    await page.keyboard.press('Shift+K');
+    await page.keyboard.press('Shift+Space');
+    expect(await page.inputValue('#list-search')).toBe('JK ');
+    expect(await page.locator('.bulkbar').count()).toBe(0);
+    await page.keyboard.press('Escape');
+  });
+
+  it('expands the inspector by control and by key, keeps it across a reload, and collapses before closing', async () => {
+    await page.keyboard.press('Enter');
+    const inspector = page.locator('.inspector');
+    await expect.poll(() => inspector.getAttribute('data-expanded')).toBe('false');
+
+    // Wider than the old 380px, beside the list — no modal.
+    const narrow = await settledWidth('.inspector');
+    expect(narrow).toBeGreaterThan(380);
+    expect(await page.locator('[role="dialog"]').count()).toBe(0);
+
+    await page.keyboard.press('e');
+    await expect.poll(() => inspector.getAttribute('data-expanded')).toBe('true');
+    expect(await page.locator('main.is-expanded').count()).toBe(1);
+    // Polled first: the column transition may not have begun on the first read.
+    await expect.poll(async () => (await inspector.boundingBox())!.width).toBeGreaterThan(narrow);
+    expect(await settledWidth('.inspector')).toBeGreaterThan(narrow);
+    expect(await settledWidth('main .content')).toBeGreaterThanOrEqual(359);
+
+    // The cursor still drives it, and it stays expanded.
+    const before = await inspectorTitle();
+    await page.keyboard.press('j');
+    await expect.poll(inspectorTitle).not.toBe(before);
+    expect(await inspector.getAttribute('data-expanded')).toBe('true');
+
+    // The control does the same thing as the key.
+    await page.click('.inspector__expand');
+    await expect.poll(() => inspector.getAttribute('data-expanded')).toBe('false');
+    await page.click('.inspector__expand');
+    await expect.poll(() => inspector.getAttribute('data-expanded')).toBe('true');
+
+    // Persisted per browser: a reload opens the next inspector expanded.
+    await openOverview();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => inspector.getAttribute('data-expanded')).toBe('true');
+
+    // One Escape collapses, the next closes.
+    await page.keyboard.press('Escape');
+    await expect.poll(() => inspector.getAttribute('data-expanded')).toBe('false');
+    expect(await inspector.count()).toBe(1);
+    await page.keyboard.press('Escape');
+    expect(await inspector.count()).toBe(0);
   });
 });
