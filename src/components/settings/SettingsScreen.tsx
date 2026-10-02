@@ -16,6 +16,7 @@ import {
   INSTANCE_KINDS, KIND_LABEL,
   type InstanceDto, type InstanceHealthDto, type InstanceKind,
 } from '@/lib/types';
+import { APP_VERSION } from '@/lib/version';
 
 export default function SettingsScreen({ initiallyAdding = false }: { initiallyAdding?: boolean }) {
   const { toasts, push } = useToasts();
@@ -107,7 +108,7 @@ export default function SettingsScreen({ initiallyAdding = false }: { initiallyA
             <div className="card">
               <KV
                 rows={[
-                  ['Version', 'helparr 0.1.0'],
+                  ['Version', `helparr ${APP_VERSION}`],
                   ['Credentials', 'AES-encrypted SQLite, keyed by HELPARR_ENCRYPTION_KEY'],
                   ['Health polling', 'every 60s, with backoff after repeated failure'],
                   ['Mode', 'LAN-only, no public exposure'],

@@ -7,6 +7,7 @@ import BrandMark from './BrandMark';
 import Icon from './Icon';
 import { Callout } from './ui';
 import { api, ApiError } from '@/lib/api';
+import { APP_VERSION } from '@/lib/version';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -59,7 +60,7 @@ export default function LoginScreen() {
         <div className="brand" style={{ border: 'none', background: 'none', padding: 0, marginBottom: 'var(--space-4)' }}>
           <span className="brand__mark" aria-hidden="true"><BrandMark size={16} /></span>
           <span className="brand__name">helparr</span>
-          <span className="brand__version">0.1.0</span>
+          <span className="brand__version">{APP_VERSION}</span>
         </div>
 
         <h1 className="screen-head__title" style={{ marginBottom: 'var(--space-1)' }}>Sign in</h1>

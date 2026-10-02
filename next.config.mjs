@@ -1,5 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const { version } = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -45,6 +50,9 @@ const nextConfig = {
   // (ADR-1, REQ-DEPLOY-007).
   env: {
     HELPARR_COMPILED_BASE_PATH: process.env.HELPARR_BASE_PATH || '',
+    // The version the UI shows, read from package.json once per build so a
+    // release bump is the only edit a new version needs.
+    HELPARR_VERSION: version,
   },
 };
 

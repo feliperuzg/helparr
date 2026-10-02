@@ -11,6 +11,7 @@ import ShortcutsDialog from './ShortcutsDialog';
 import { isDialogOpen, StatusDot } from './ui';
 import { api } from '@/lib/api';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/status';
+import { APP_VERSION } from '@/lib/version';
 
 interface NavItem {
   to: string;
@@ -173,7 +174,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             the ~11px height it derives. */}
         <span className="brand__mark" aria-hidden="true"><BrandMark size={16} /></span>
         <span className="brand__name">helparr</span>
-        <span className="brand__version">0.1.0</span>
+        <span className="brand__version">{APP_VERSION}</span>
       </div>
 
       <header className="topbar">
