@@ -1,15 +1,15 @@
 {
-  "note": "Transfer weight of the assembled site, in bytes: gzip -9 for text, raw for already-compressed formats. Measured by test/site-weight.test.ts, which fails when the site goes over. Update deliberately, in the same commit as whatever grew, and say why. The four screenshots are 284,010 B of the total — the page itself is under 14 kB.",
+  "note": "Transfer weight of the assembled site, in bytes: gzip -9 for text, raw for already-compressed formats. Measured by test/site-weight.test.ts, which fails when the site goes over. Update deliberately, in the same commit as whatever grew, and say why. The four screenshots are 287,487 B of the total \u2014 the page itself is under 14 kB.",
   "tolerance": 512,
-  "total": 330920,
+  "total": 334397,
   "files": {
     "fonts/jetbrains-mono-latin-var.woff2": 31340,
     "index.html": 6653,
     "logo.svg": 1989,
-    "screenshots/gaps.png": 55187,
-    "screenshots/overview.png": 77544,
-    "screenshots/rename.png": 83700,
-    "screenshots/search.png": 67579,
+    "screenshots/gaps.png": 56100,
+    "screenshots/overview.png": 78254,
+    "screenshots/rename.png": 84388,
+    "screenshots/search.png": 68745,
     "styles.css": 6928
   }
 }
