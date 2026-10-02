@@ -10,11 +10,12 @@ works on more than one row at a time.
 
 ### Added
 
-- **Expandable inspector** — `e` or the header control widens the open
-  inspector to 560 px beside the list, never over it; the list keeps at least
-  360 px. The width is remembered per browser. Esc collapses an expanded panel
-  before it closes it, and the panel follows the cursor as `j`/`k` move, at
-  either width.
+- **Wider, expandable inspector** — the inspector opens at 560 px (was 380 px),
+  narrowing only as far as the viewport needs. `e` or the header control
+  expands it to the whole content column except 360 px kept for the list,
+  always beside the list, never over it. The choice is remembered per browser.
+  Esc collapses an expanded panel before it closes it, and the panel follows
+  the cursor as `j`/`k` move, at either width.
 - **Range selection** — shift+click, Shift+J/K (or Shift+↓/↑) and Shift+Space
   select from the anchor to the target on Overview, Gaps, Rename (the picker
   and the plan grid) and Force import. The range covers the rows on screen
