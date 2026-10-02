@@ -35,7 +35,7 @@ import { formatBytes } from '@/lib/queue';
 export type CandidateGridMode =
   /** `ready` on a writable instance: rows can be included and remapped. */
   | 'edit'
-  /** Radarr while its write is unverified (ADR-6): candidates for reference only. */
+  /** A kind whose write is gated off (ADR-6, `writeEnabled`): candidates for reference only. */
   | 'readonly'
   /** The preview outlived its five minutes: still visible, nothing actionable. */
   | 'expired';

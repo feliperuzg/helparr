@@ -6,19 +6,20 @@ import 'server-only';
  * Sonarr's `ManualImport` payload was captured live against a running
  * instance (OQ-5, research.md): `{name: 'ManualImport', importMode: 'auto',
  * files: [{path, seriesId, episodeIds, quality, languages, releaseGroup,
- * indexerFlags, releaseType, downloadId}]}`. Radarr's is a projection —
- * `movieId` in place of `seriesId`/`episodeIds` — implemented and tested
- * against `fakeArr`, but never exercised against a real instance.
+ * indexerFlags, releaseType, downloadId}]}`. Radarr's is the same projection
+ * with `movieId` in place of `seriesId`/`episodeIds`.
  *
- * `startImport` (T8) reads this map before issuing any write, and
- * `radarr: false` is what keeps that unverified projection out of a real
- * library. T0 captures one real Radarr import and confirms or amends ADR-6;
- * T28 flips this flag only if that capture matches. While disabled, Radarr's
- * candidates still render read-only — the gate is on the write, not the read.
+ * Radarr was enabled without a live capture: the operator waived T0 and took
+ * the payload as Sonarr's equivalent (ADR-6, amended). Its shape is pinned by
+ * `test/import-plan.test.ts` against `fakeArr`, not against a real instance.
+ *
+ * `startImport` reads this map before issuing any write. A kind set to `false`
+ * still renders its candidates read-only — the gate is on the write, not the
+ * read.
  */
 export const IMPORT_WRITE_ENABLED: Record<'sonarr' | 'radarr', boolean> = {
   sonarr: true,
-  radarr: false,
+  radarr: true,
 };
 
 export function importWriteEnabled(kind: 'sonarr' | 'radarr'): boolean {

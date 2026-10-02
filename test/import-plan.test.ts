@@ -398,9 +398,9 @@ describe('force import build and apply', () => {
     expect(operations.operations.find((op) => op.kind === 'import')).toBeUndefined();
   });
 
-  /* ── Apply: Radarr is disabled (ADR-6) ────────────────────────────────── */
+  /* ── Apply: Radarr (ADR-6, amended — T0 waived) ───────────────────────── */
 
-  it('refuses a Radarr plan as write-disabled and sends no command', async () => {
+  it('posts a Radarr ManualImport keyed by movieId, with an explicit importMode', async () => {
     const instanceId = registerRadarr();
     radarr.setImportCandidates([{
       path: '/downloads/movie.mkv',
@@ -422,13 +422,20 @@ describe('force import build and apply', () => {
     expect(plan.instanceKind).toBe('radarr');
 
     const includedCount = plan.rows.filter((row) => row.included).length;
+    expect(includedCount).toBe(1);
+    radarr.setImportHook(() => ({ succeeded: { '/downloads/movie.mkv': '/movies/Heat (1995)/Heat.mkv' } }));
+
     const started = await startImport(plan.id, includedCount);
-    expect(started.ok).toBe(false);
-    expect(started.ok === false && started.error.kind === 'refused' && started.error.refusal.reason)
-      .toBe('write-disabled');
-    expect(radarr.commands.filter((c) => c.body.name === 'ManualImport')).toHaveLength(0);
-    // Not persisted, same reasoning as count-mismatch: this is a static gate,
-    // not a fact about the candidate set having changed.
-    expect(getImportPlan(plan.id)?.phase).toBe('ready');
+    expect(started.ok).toBe(true);
+    await settle(plan.id);
+
+    const commands = radarr.commands.filter((c) => c.body.name === 'ManualImport');
+    expect(commands).toHaveLength(1);
+    expect(commands[0].body.importMode).toBe('auto');
+    const files = commands[0].body.files as Array<Record<string, unknown>>;
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatchObject({ path: '/downloads/movie.mkv', movieId: 5, downloadId: 'HASH2' });
+    expect(files[0]).not.toHaveProperty('seriesId');
+    expect(files[0]).not.toHaveProperty('episodeIds');
   });
 });

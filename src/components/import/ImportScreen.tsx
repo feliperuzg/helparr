@@ -46,8 +46,9 @@ import {
  * 3. **Nothing is optimistic.** Inclusion and mapping change when the server's
  *    copy of the plan comes back; outcomes appear when the read-back writes
  *    them.
- * 4. **Radarr is read-only** until its write is verified (ADR-6): candidates
- *    render for reference, and the write path is absent rather than disabled.
+ * 4. **A kind whose write is gated off is read-only** (ADR-6, `writeEnabled`):
+ *    candidates render for reference, and the write path is absent rather
+ *    than disabled. Both kinds are currently enabled.
  */
 
 const EDIT_HINTS: Array<[string[], string]> = [
