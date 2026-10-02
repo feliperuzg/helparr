@@ -3,6 +3,21 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org/),
 and a `0.x` means the public surface can still move between minors.
 
+## [0.2.1] — 2026-10-02
+
+### Fixed
+
+- The sidebar, login screen and Settings showed `0.1.0` in v0.2.0: the version
+  was written into each component by hand. It is now read from `package.json`
+  at build time, and a test fails if a hardcoded copy comes back.
+
+### Known issues
+
+- A 401 bounce ignores `HELPARR_BASE_PATH`, so a session that expires under a
+  sub-path redirects to the wrong URL.
+- The rename screen reports "0 files already correct" for a title that simply
+  has nothing pending.
+
 ## [0.2.0] — 2026-10-02
 
 Stuck-item triage: helparr now says *why* a queue item is stuck, shows the
@@ -93,5 +108,6 @@ it was built; the test suites are the executable half of that specification.
 
 Neither is a data-loss path.
 
+[0.2.1]: https://github.com/feliperuzg/helparr/releases/tag/v0.2.1
 [0.2.0]: https://github.com/feliperuzg/helparr/releases/tag/v0.2.0
 [0.1.0]: https://github.com/feliperuzg/helparr/releases/tag/v0.1.0
