@@ -1,6 +1,6 @@
 {
   "name": "helparr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Self-hosted web companion for Sonarr, Radarr and Prowlarr — one queue across every instance that flags stalled downloads, plus manual search and grab, missing-episode hunting and rename previews.",
   "license": "MIT",

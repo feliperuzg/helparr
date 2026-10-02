@@ -3,6 +3,54 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org/),
 and a `0.x` means the public surface can still move between minors.
 
+## [0.2.0] — 2026-10-02
+
+Stuck-item triage: helparr now says *why* a queue item is stuck, shows the
+evidence, and offers the one remedy that fits.
+
+### Added
+
+- **Queue causes** — every queue row carries exactly one cause from a closed
+  taxonomy (stalled, payload missing, import rejected, import not performed,
+  importing, healthy, unknown), with the evidence it rests on and whether that
+  evidence was reported by the instance or inferred by helparr.
+- **Force import** — a completed download whose import did not happen can be
+  imported through a plan: every candidate file with the item it resolved to
+  and its verbatim rejections, replacements of existing files excluded by
+  default, and nothing sent until the exact file count is typed. A candidate set
+  that changed since the preview is refused whole. Each file's outcome is read
+  back from history, so a partial import is reported as partial and logged that
+  way. Works for Sonarr and Radarr.
+- **Decision explainer** — for a release rejected against an existing file or a
+  score threshold, both qualities, total scores, per-format matches (each score
+  naming whether it came from the release name or the filename), and the
+  profile's cutoff and minimum, beside the verbatim reason. Reachable from
+  search, from a rejected queue row, and from gaps via **Evaluate releases**.
+- **Unmapped folders** — a new screen (key `7`) listing folders under each root
+  folder that no instance monitors, with a search link for each. A root folder
+  the instance did not report on is shown as unknown, never as empty.
+- **Landing page** — a static site at `feliperuzg.github.io/helparr`, whose
+  every factual claim is checked by a test.
+
+### Changed
+
+- The error and idle status colours are lighter, to keep the new screens above
+  WCAG 2.1 AA contrast.
+
+### Notes
+
+- Radarr's force-import payload is modelled on Sonarr's (with `movieId`) and is
+  tested against a simulated instance, not yet against a real Radarr import.
+  If the first one fails, the failure is shown per file and recorded in the
+  operation log.
+
+### Known issues
+
+- A 401 bounce ignores `HELPARR_BASE_PATH`, so a session that expires under a
+  sub-path redirects to the wrong URL.
+- The rename screen reports "0 files already correct" for a title that simply
+  has nothing pending.
+
 ## [0.1.0] — 2026-09-20
 
 First tagged release, and the first image published to
@@ -45,4 +93,5 @@ it was built; the test suites are the executable half of that specification.
 
 Neither is a data-loss path.
 
+[0.2.0]: https://github.com/feliperuzg/helparr/releases/tag/v0.2.0
 [0.1.0]: https://github.com/feliperuzg/helparr/releases/tag/v0.1.0
