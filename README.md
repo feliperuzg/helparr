@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/feliperuzg/helparr/releases/latest"><img alt="release: v0.2.1" src="https://img.shields.io/badge/release-v0.2.1-0F172A"></a>
+  <a href="https://github.com/feliperuzg/helparr/releases/latest"><img alt="release: v0.3.0" src="https://img.shields.io/badge/release-v0.3.0-0F172A"></a>
   <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
   <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-0F172A">
 </p>

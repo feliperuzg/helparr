@@ -3,7 +3,7 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org/),
 and a `0.x` means the public surface can still move between minors.
 
-## [Unreleased]
+## [0.3.0] — 2026-10-02
 
 Queue-triage ergonomics: more room to read the evidence, and selection that
 works on more than one row at a time.
@@ -27,10 +27,25 @@ works on more than one row at a time.
   target") rather than silently, and a failed request leaves every row as it
   was.
 
+### Security
+
+- Next.js 16.3.6, which fixes a critical remote-code-execution advisory in
+  `next/og` (`ImageResponse`). helparr does not use `next/og`, but no longer
+  ships the vulnerable version.
+
 ### Fixed
 
 - The keyboard-shortcuts dialog body can be scrolled from the keyboard when it
   is taller than the viewport.
+
+### Known issues
+
+- Behind some deployments, the decision comparison and force import can fail with
+  "Failed to fetch"; under investigation.
+- A 401 bounce ignores `HELPARR_BASE_PATH`, so a session that expires under a
+  sub-path redirects to the wrong URL.
+- The rename screen reports "0 files already correct" for a title that simply
+  has nothing pending.
 
 ## [0.2.1] — 2026-10-02
 
