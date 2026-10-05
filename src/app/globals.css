@@ -1556,12 +1556,16 @@ select.input {
   border-radius: var(--radius-md);
 }
 
-.kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-2) var(--space-3); font-size: var(--text-xs); }
+/* The key column grows to fit its longest key (Sonarr's `trackedDownloadStatus`
+   overran a fixed 96px into the value), and a key still too long for the space
+   wraps instead of overlapping. */
+.kv { display: grid; grid-template-columns: minmax(96px, max-content) minmax(0, 1fr); gap: var(--space-2) var(--space-3); font-size: var(--text-xs); }
 .kv__k {
   font-family: var(--font-heading);
   font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--color-text-subtle);
   padding-top: 2px;
+  overflow-wrap: anywhere;
 }
 .kv__v { font-family: var(--font-mono); font-size: var(--text-xs); word-break: break-word; }
 

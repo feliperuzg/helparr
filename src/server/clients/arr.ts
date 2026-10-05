@@ -96,6 +96,14 @@ const GAPS_MAX_PAGES = 25;
 const GAPS_DEADLINE_MS = 30_000;
 
 /**
+ * `GET /manualimport?downloadId=…` makes the instance walk the download and
+ * parse every file in it, media info included. A full-season pack of large
+ * files routinely takes longer than the default 8s, which surfaced as an
+ * aborted comparison and a force import that could not resolve its candidates.
+ */
+const MANUAL_IMPORT_DEADLINE_MS = 60_000;
+
+/**
  * Enough to show why an item is still missing without paging: the inference
  * only ever looks at the most recent grab/import/failure for one item.
  */
@@ -430,7 +438,7 @@ export class ArrClient extends BaseArrClient
     signal?: AbortSignal,
   ): Promise<ClientResult<ArrImportCandidate[]>> {
     const context = `${this.kind} manual import candidates`;
-    const combined = this.withTimeout(signal);
+    const combined = this.withTimeout(signal, MANUAL_IMPORT_DEADLINE_MS);
 
     const response = await requestWithRetry(
       this.url('/manualimport', { downloadId, filterExistingFiles: false }),
