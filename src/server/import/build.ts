@@ -1,6 +1,8 @@
 import 'server-only';
 
-import type { ImportBulkSkip, ImportMapping, ImportPlan, ImportPlanRow } from '@/lib/importPlan';
+import type {
+  ImportBulkSkip, ImportMapping, ImportPlan, ImportPlanRow, ImportReplacement,
+} from '@/lib/importPlan';
 import {
   type ArrEpisodeRef,
   type InstanceClient,
@@ -206,8 +208,35 @@ export async function editImportRow(
     return { ok: false, error: 'invalid-mapping' };
   }
 
-  const result = updateImportRow(planId, ordinal, patch);
+  const chosen = new Set(patch.mapping.episodeIds);
+  const replacesExisting = await replacementFor(
+    resolved.client,
+    episodes.value.filter((episode) => chosen.has(episode.id)),
+    signal,
+  );
+
+  const result = updateImportRow(planId, ordinal, { ...patch, replacesExisting });
   return result.ok ? { ok: true } : { ok: false, error: result.error };
+}
+
+/**
+ * The replacement flag for an operator-chosen target, read from the same
+ * episode list the mapping was validated against — the same rule
+ * `resolveReplacement` applies to the instance's own target, with the replaced
+ * file's quality named the way `nameReplacedQualities` names it.
+ */
+async function replacementFor(
+  client: InstanceClient,
+  episodes: ArrEpisodeRef[],
+  signal?: AbortSignal,
+): Promise<ImportReplacement | null> {
+  const existing = episodes.find((episode) => episode.hasFile);
+  if (!existing) return null;
+
+  const fileId = existing.episodeFileId;
+  if (fileId === null || !isDecisionsClient(client)) return { quality: null, fileId };
+  const file = await client.existingFile(fileId, signal);
+  return { quality: file.ok ? file.value?.quality?.quality.name ?? null : null, fileId };
 }
 
 export type EditImportRowsError = ImportRowsUpdateError;

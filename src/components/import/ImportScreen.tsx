@@ -92,7 +92,7 @@ function editErrorText(error: Error, instanceLabel: string): string {
     case 'plan-not-ready':
       return 'This preview can no longer be changed — it expired or is already being imported.';
     case 'missing-mapping':
-      return 'That file has no target yet. Map it with “Change…” before including it.';
+      return 'That file has no target yet. Map it with “Choose episode…” before including it.';
     case 'invalid-mapping':
       return `${instanceLabel} did not accept that mapping: the episodes must belong to this series, and ${instanceLabel} must be reachable to check them. The mapping is unchanged.`;
     case 'radarr-mapping-fixed':
@@ -256,7 +256,7 @@ export default function ImportScreen({
   const toggleRow = useCallback((row: ImportPlanRow) => {
     if (!editable || editing) return;
     if (row.mapping === null && !row.included) {
-      push('That file has no target yet. Map it with “Change…” before including it.', 'warn');
+      push('That file has no target yet. Map it with “Choose episode…” before including it.', 'warn');
       return;
     }
     setAnchor(row.ordinal);

@@ -451,7 +451,7 @@ describe('stuck-item triage interaction', { timeout: 90_000 }, () => {
 
     // The replacement starts excluded, and the screen says so twice.
     const replaceRow = gridRow(CAND_REPLACE.path as string);
-    expect(await replaceRow.textContent()).toContain('Replaces existing file:');
+    expect(await replaceRow.textContent()).toContain('Replaces the existing file at');
     expect(await replaceRow.textContent()).toContain('Starts excluded — include it explicitly to replace that file.');
     expect(await replaceRow.locator('input[type="checkbox"]').isChecked()).toBe(false);
     expect(await gridRow(CAND_A.path as string).locator('input[type="checkbox"]').isChecked()).toBe(true);

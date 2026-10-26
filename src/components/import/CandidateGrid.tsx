@@ -21,9 +21,9 @@ import { formatBytes } from '@/lib/queue';
  * - **replace-flagged** — the target already has a file. Starts unticked
  *   (ADR-8) and says, in words and numbers, which quality replaces which.
  * - **unmapped** — the instance resolved no target. The checkbox is present but
- *   disabled; "Change…" is the only way to make the row includable. There is no
+ *   disabled; "Choose episode…" is the only way to make the row includable. There is no
  *   path to import a file with no destination.
- * - **operator-remapped** — "Mapped by" reads "you changed this" as text, not as
+ * - **operator-remapped** — the owner under the target reads "you changed this" as text, not as
  *   a row tint (REQ-QUEUE-021's "indicate that the mapping differs").
  *
  * Rejections are rendered verbatim, one per line, attributed to the instance
@@ -43,9 +43,9 @@ export type CandidateGridMode =
 export interface CandidateGridProps {
   rows: ImportPlanRow[];
   mode: CandidateGridMode;
-  /** Who resolved these candidates — named on every rejection and on "Mapped by". */
+  /** Who resolved these candidates — named on every rejection and under each target. */
   instanceLabel: string;
-  /** Radarr has nothing to remap against (one record, one movie), so no "Change…". */
+  /** Radarr has nothing to remap against (one record, one movie), so no "Change episode…". */
   canRemap: boolean;
   cursor: number;
   onCursorChange: (index: number) => void;
@@ -86,18 +86,14 @@ export default function CandidateGrid({
         <thead>
           <tr>
             {showCheck ? (
-              <th scope="col" className="col-check">
-                <span className="sr-only">Included</span>
-              </th>
+              // Named on screen, not only for a screen reader: a bare checkbox
+              // column read as row selection rather than "this file is sent".
+              <th scope="col" className="col-check">Import</th>
             ) : null}
             <th scope="col" className="col-grow">File</th>
             <th scope="col" className="col-num">Size</th>
             <th scope="col">Quality</th>
-            <th scope="col">Target</th>
-            {showMappedBy ? <th scope="col">Mapped by</th> : null}
-            {remappable ? (
-              <th scope="col"><span className="sr-only">Change mapping</span></th>
-            ) : null}
+            <th scope="col">Imports as</th>
           </tr>
         </thead>
         <tbody>
@@ -253,44 +249,42 @@ function CandidateRow({
         {row.quality.name ?? '—'}
       </td>
 
-      <td style={{ paddingBlock: 'var(--space-2)', whiteSpace: 'normal' }}>
-        {row.mapping ? (
-          <span>{row.mapping.label}</span>
-        ) : (
-          <span className="subtle">
-            <span aria-hidden="true">— unmapped —</span>
-            <span className="sr-only">no target</span>
-          </span>
-        )}
+      {/* The target, who chose it and the control that changes it read as one
+          statement, so the cell is kept on one line per part instead of being
+          squeezed by `col-grow` into a word per line. */}
+      <td style={{ paddingBlock: 'var(--space-2)', whiteSpace: 'nowrap' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 'var(--space-1)' }}>
+          {row.mapping ? (
+            <span style={{ color: 'var(--color-foreground)' }}>{row.mapping.label}</span>
+          ) : (
+            <span className="subtle">
+              <span aria-hidden="true">— no target —</span>
+              <span className="sr-only">no target</span>
+            </span>
+          )}
+          {showMappedBy ? <MappedBy row={row} instanceLabel={instanceLabel} /> : null}
+          {remappable && onChangeMapping ? (
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                onCursorChange(index);
+                onChangeMapping(row);
+              }}
+              onKeyDown={keepKeysLocal}
+              disabled={busy}
+              // Roving, like the row: Tab from the cursor row reaches its own
+              // button, not every button in the grid.
+              tabIndex={isCursor ? 0 : -1}
+              aria-label={`Change which episode ${name} imports as`}
+            >
+              <Icon name="rename" size={11} />
+              {unmapped ? 'Choose episode…' : 'Change episode…'}
+            </button>
+          ) : null}
+        </div>
       </td>
-
-      {showMappedBy ? (
-        <td style={{ paddingBlock: 'var(--space-2)' }}>
-          <MappedBy row={row} instanceLabel={instanceLabel} />
-        </td>
-      ) : null}
-
-      {remappable && onChangeMapping ? (
-        <td style={{ paddingBlock: 'var(--space-1)' }}>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={(event) => {
-              event.stopPropagation();
-              onCursorChange(index);
-              onChangeMapping(row);
-            }}
-            onKeyDown={keepKeysLocal}
-            disabled={busy}
-            // Roving, like the row: Tab from the cursor row reaches its own
-            // button, not every button in the grid.
-            tabIndex={isCursor ? 0 : -1}
-            aria-label={`Change what ${name} is mapped to`}
-          >
-            Change…
-          </button>
-        </td>
-      ) : null}
     </tr>
   );
 }
@@ -320,7 +314,7 @@ function MappedBy({ row, instanceLabel }: { row: ImportPlanRow; instanceLabel: s
   return (
     <span className="badge badge-idle" title={`${instanceLabel}'s own resolution, unmodified`}>
       <Icon name="plug" size={11} />
-      {instanceLabel}
+      {instanceLabel}&rsquo;s guess
     </span>
   );
 }
@@ -361,7 +355,9 @@ function CandidateNotes({
         >
           <Icon name="alert" size={11} />
           <span>
-            <strong>Replaces existing file: </strong>
+            <strong>
+              Replaces the existing file{row.mapping ? <> at {row.mapping.label}</> : null}:{' '}
+            </strong>
             <span className="mono">{swap}</span>
             <span className="subtle"> — helparr&rsquo;s reading; {instanceLabel} calls any replacement an upgrade.</span>
             {showInclusion ? (
@@ -378,7 +374,7 @@ function CandidateNotes({
       {unmapped ? (
         <p style={{ margin: 0 }} className="subtle">
           No target — {instanceLabel} could not resolve a destination for this file.
-          {showInclusion ? ' Map it with “Change…” before it can be included.' : ''}
+          {showInclusion ? ' Map it with “Choose episode…” before it can be included.' : ''}
         </p>
       ) : null}
 
