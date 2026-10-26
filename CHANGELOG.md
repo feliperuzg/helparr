@@ -3,6 +3,52 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org/),
 and a `0.x` means the public surface can still move between minors.
 
+## [0.3.1] — 2026-10-26
+
+Security patches for every open advisory, and a force import that is easier to
+read when the instance has guessed the wrong episode.
+
+### Security
+
+- Next.js 16.4.3, which fixes two critical unauthenticated remote-code-execution
+  advisories (`use cache` functions returning typed arrays, and the Image
+  Optimization API with SVG files) and a denial of service through Server
+  Actions. **Upgrade any internet-reachable instance.**
+- zod 4.6.7, which fixes memory exhaustion while validating oversized
+  constrained collections. A major version; helparr uses none of the removed APIs.
+- source-map-js 1.2.2, and the development-only sharp 0.35.5, vite 8.3.5 and
+  vitest 5.0.5.
+
+### Changed
+
+- **Force import preview** — the inclusion column is labelled **Import**; the
+  target, who chose it ("Sonarr's guess" or "you changed this") and the
+  **Change episode…** control share one **Imports as** cell, so the target no
+  longer wraps a word per line; a replacement warning names the episode whose
+  file it would overwrite.
+
+### Fixed
+
+- Remapping a force-import row re-reads the replacement warning against the
+  newly chosen episodes. It used to keep the warning computed for the
+  instance's original target — a file moved from S01E01 to an empty S03E01
+  still claimed it would overwrite S01E01.
+- The import comparison and force import gave up after 8 s waiting for the
+  instance's candidate list. A full-season pack can take longer for the instance
+  to parse, so they now wait up to 60 s.
+- Inspector labels such as `trackedDownloadStatus` no longer overlap their values.
+- The force-import progress table keeps each target on one line.
+
+### Known issues
+
+- Behind some deployments, the decision comparison and force import can still
+  fail with "Failed to fetch"; the longer deadline may resolve it, under
+  investigation.
+- A 401 bounce ignores `HELPARR_BASE_PATH`, so a session that expires under a
+  sub-path redirects to the wrong URL.
+- The rename screen reports "0 files already correct" for a title that simply
+  has nothing pending.
+
 ## [0.3.0] — 2026-10-02
 
 Queue-triage ergonomics: more room to read the evidence, and selection that
