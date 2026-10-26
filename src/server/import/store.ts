@@ -219,11 +219,15 @@ export function createImportPlan(input: ImportPlanInput): ImportPlan {
  * mapping back to null, only to replace it, because a row the instance could
  * not map starts excluded with "no target" and the only forward path for it
  * is the operator supplying one (ADR-4).
+ *
+ * A new mapping carries its own `replacesExisting`: the flag describes the
+ * target, so a remap that keeps the old one would warn about a file the import
+ * no longer touches.
  */
 export function updateImportRow(
   planId: string,
   ordinal: number,
-  patch: { included?: boolean; mapping?: ImportMapping },
+  patch: { included?: boolean; mapping?: ImportMapping; replacesExisting?: ImportReplacement | null },
 ): ImportRowUpdateResult {
   if (patch.included === undefined && patch.mapping === undefined) return { ok: true };
 
@@ -249,9 +253,15 @@ export function updateImportRow(
     if (patch.mapping !== undefined) {
       db.prepare(`
         UPDATE import_plan_row
-           SET mapping_json = ?, mapping_source = 'operator', included = ?
+           SET mapping_json = ?, mapping_source = 'operator', replaces_existing_json = ?, included = ?
          WHERE plan_id = ? AND ordinal = ?
-      `).run(JSON.stringify(patch.mapping), nextIncluded ? 1 : 0, planId, ordinal);
+      `).run(
+        JSON.stringify(patch.mapping),
+        patch.replacesExisting ? JSON.stringify(patch.replacesExisting) : null,
+        nextIncluded ? 1 : 0,
+        planId,
+        ordinal,
+      );
     } else {
       db.prepare(`
         UPDATE import_plan_row SET included = ? WHERE plan_id = ? AND ordinal = ?

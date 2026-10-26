@@ -252,4 +252,40 @@ describe('import plan row edit', () => {
     expect(patchSchema.safeParse({ ordinal: 0, included: true }).success).toBe(true);
     expect(patchSchema.safeParse({ ordinals: [0, 1, 2], included: true }).success).toBe(true);
   });
+  /* ── Remap recomputes the replacement flag ────────────────────────────── */
+
+  it('re-reads the replacement flag against the target a remap chooses', async () => {
+    const plan = await buildThreeRowPlan();
+    const ep2 = plan.rows.find((row) => row.path === '/downloads/ep2.mkv')!;
+    const ep1 = plan.rows.find((row) => row.path === '/downloads/ep1.mkv')!;
+    expect(ep2.replacesExisting).not.toBeNull();
+
+    sonarr.setEpisodes([
+      { id: 11, seasonNumber: 1, episodeNumber: 1, title: null, hasFile: false, episodeFileId: 0 },
+      { id: 12, seasonNumber: 1, episodeNumber: 2, title: null, hasFile: true, episodeFileId: 99 },
+      { id: 31, seasonNumber: 3, episodeNumber: 1, title: null, hasFile: false, episodeFileId: 0 },
+    ]);
+    sonarr.setExistingFile(99, {
+      id: 99,
+      quality: { quality: { id: 4, name: 'HDTV-720p' }, revision: { version: 1, real: 0, isRepack: false } },
+    });
+    const mapping = (episodeId: number, episodeNumber: number, seasonNumber: number) => ({
+      kind: 'series' as const,
+      seriesId: 1,
+      seriesTitle: 'Reacher',
+      seasonNumber,
+      episodeIds: [episodeId],
+      label: `Reacher — S0${seasonNumber}E0${episodeNumber}`,
+    });
+
+    // Away from a file: the warning described the old target and goes with it.
+    expect((await editImportRow(plan.id, ep2.ordinal, { mapping: mapping(31, 1, 3) })).ok).toBe(true);
+    // Onto a file: the warning appears, naming what would be overwritten.
+    expect((await editImportRow(plan.id, ep1.ordinal, { mapping: mapping(12, 2, 1) })).ok).toBe(true);
+
+    const after = getImportPlan(plan.id)!;
+    expect(after.rows.find((row) => row.ordinal === ep2.ordinal)?.replacesExisting).toBeNull();
+    expect(after.rows.find((row) => row.ordinal === ep1.ordinal)?.replacesExisting)
+      .toEqual({ quality: 'HDTV-720p', fileId: 99 });
+  });
 });

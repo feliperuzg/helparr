@@ -178,7 +178,9 @@ export default function ImportProgress({ plan, onRebuild, rebuilding }: ImportPr
                         </span>
                         <OutcomeDetail row={row} instance={instance} />
                       </td>
-                      <td style={{ paddingBlock: 'var(--space-2)', whiteSpace: 'normal' }}>
+                      {/* Kept on one line: `col-grow` takes every spare pixel, so a
+                          wrapping target was squeezed to its longest word. */}
+                      <td style={{ paddingBlock: 'var(--space-2)', whiteSpace: 'nowrap' }}>
                         {row.mapping?.label ?? '—'}
                         {row.mappingSource === 'operator' ? (
                           <span className="subtle" style={{ display: 'block' }}>you changed this</span>
